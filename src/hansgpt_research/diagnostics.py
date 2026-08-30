@@ -715,7 +715,8 @@ def train_multitask_head(
                 break
     if best_state is None:
         raise RuntimeError("Multitask training produced no checkpoint")
-    head.load_state_dict(best_state).eval()
+    head.load_state_dict(best_state)
+    head.eval()
     validation_probabilities = _predict_head(
         head,
         feature_tensor[validation_tensor],

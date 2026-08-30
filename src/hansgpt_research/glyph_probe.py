@@ -393,12 +393,16 @@ def extract_features(
     metadata_path = feature_dir / "extraction_metadata.json"
     if hidden_path.exists() and embedding_path.exists() and metadata_path.exists():
         print(f"[features] Reusing cached features: {feature_dir}", flush=True)
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata.get("resolved_revision") is None:
+            metadata["resolved_revision"] = config.model_revision
+            _json_dump(metadata_path, metadata)
         return (
             {
                 "last_hidden": np.load(hidden_path, mmap_mode="r"),
                 "input_embedding": np.load(embedding_path, mmap_mode="r"),
             },
-            json.loads(metadata_path.read_text(encoding="utf-8")),
+            metadata,
         )
 
     if not torch.cuda.is_available():

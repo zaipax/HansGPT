@@ -25,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 hansgpt-glyph-probe = "hansgpt_research.glyph_probe:main"
+hansgpt-diagnostics = "hansgpt_research.diagnostics:main"
 
 [build-system]
 requires = ["hatchling"]

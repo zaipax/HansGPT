@@ -1,0 +1,23 @@
+{
+  "suite_name": "Qwen3.5-2B 汉字字形解码瓶颈诊断",
+  "model_id": "Qwen/Qwen3.5-2B-Base",
+  "model_revision": "b1485b2fa6dfa1287294f269f5fb618e03d52d7c",
+  "base_experiment_dir": "artifacts/experiments/qwen35_2b_hanziglyph_5k",
+  "output_dir": "artifacts/diagnostics/qwen35_2b_glyph_bottleneck",
+  "font_path": "data/raw/fonts/noto-sans-cjk-sc/NotoSansCJKsc-Regular.otf",
+  "unihan_zip": "data/raw/unicode/Unihan.zip",
+  "chise_ids_dir": "data/raw/chise-ids",
+  "layer_indices": [0, 6, 12, 18, 24],
+  "seed": 20260830,
+  "feature_batch_size": 128,
+  "train_batch_size": 256,
+  "max_epochs": 180,
+  "seen_max_epochs": 400,
+  "autoencoder_max_epochs": 250,
+  "early_stopping_patience": 20,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "dice_loss_weight": 0.5,
+  "bootstrap_samples": 1000,
+  "latent_size": 64
+}

@@ -1062,6 +1062,11 @@ def build_diagnostic_report(
         key=lambda name: results[name]["retrieval_top1"],
     )
     best_layer = results[best_layer_name]
+    best_f1_layer_name = max(
+        (f"layer_{layer:02d}_linear" for layer in config.layer_indices),
+        key=lambda name: results[name]["foreground_f1"],
+    )
+    best_f1_layer = results[best_f1_layer_name]
     multitask = results["multitask_ids_radical_strokes"]
     grayscale = results["last_layer_grayscale"]
     autoencoder = results["glyph_autoencoder"]
@@ -1137,10 +1142,53 @@ def build_diagnostic_report(
             "## 归因结论",
             "",
             (
-                "本报告用容量上限、层深、非线性、结构监督、目标平滑和字形先验六个方向"
-                "区分瓶颈。最终判断应结合上表：见过字符结果用于判断输出头容量，分层结果"
-                "用于判断语言层是否损失字形信号，自编码器直接重建与语言到 latent 的差距"
-                "用于判断瓶颈在字形生成器还是语言表示。"
+                f"1. **主要瓶颈是未见字符的表示与组合泛化。** 同一个 MLP 在见过字符上 F1="
+                f"{seen_mlp['foreground_f1']:.4f}、Exact={seen_mlp['exact_match']:.4f}，在未见"
+                f"字符上 F1={unseen_mlp['foreground_f1']:.4f}、Exact="
+                f"{unseen_mlp['exact_match']:.4f}。训练与渲染管线能够工作，但原子 Token 特征"
+                "没有提供可直接组合成新字形的坐标系。"
+            ),
+            "",
+            (
+                f"2. **只取最后层是错误选择。** 字符身份检索最强的是 {best_layer_name}，"
+                f"Top-1={best_layer['retrieval_top1']:.4f}；像素 F1 最强的是 "
+                f"{best_f1_layer_name}，F1={best_f1_layer['foreground_f1']:.4f}；最后层两者"
+                f"分别只有 {unseen_linear['retrieval_top1']:.4f} 和 "
+                f"{unseen_linear['foreground_f1']:.4f}。语言建模层削弱了字符身份信号。"
+            ),
+            "",
+            (
+                f"3. **非线性容量只解决记忆，不能自动解决泛化。** 见过字符从线性 F1="
+                f"{seen_linear['foreground_f1']:.4f} 提升到 MLP F1="
+                f"{seen_mlp['foreground_f1']:.4f}；但未见字符 MLP 的 Top-1 只有 "
+                f"{unseen_mlp['retrieval_top1']:.4f}，说明其较高 F1 主要来自通用汉字模板。"
+            ),
+            "",
+            (
+                f"4. **硬二值目标是次要瓶颈。** 灰度监督将最后层线性 F1 提升 "
+                f"{grayscale['foreground_f1'] - unseen_linear['foreground_f1']:+.4f}，Top-1 "
+                f"提升 {grayscale['retrieval_top1'] - unseen_linear['retrieval_top1']:+.4f}，"
+                "有帮助但不足以消除泛化差距。"
+            ),
+            "",
+            (
+                f"5. **简单辅助标签没有形成空间组合机制。** 多任务头能达到结构准确率 "
+                f"{multitask['auxiliary_metrics']['structure_accuracy']:.4f}、部首准确率 "
+                f"{multitask['auxiliary_metrics']['radical_accuracy']:.4f}，但相对普通 MLP 的"
+                f"字形 F1 只变化 {multitask['foreground_f1'] - unseen_mlp['foreground_f1']:+.4f}。"
+            ),
+            "",
+            (
+                f"6. **字形 decoder 不是主要瓶颈。** 自编码器在未见测试字上 F1="
+                f"{autoencoder['foreground_f1']:.4f}、Top-1={autoencoder['retrieval_top1']:.4f}；"
+                f"从语言特征预测同一 latent 后降到 F1={latent['foreground_f1']:.4f}、"
+                f"Top-1={latent['retrieval_top1']:.4f}。问题发生在语言表示到几何 latent 的"
+                "映射，而不是 decoder 画不出汉字。"
+            ),
+            "",
+            (
+                "综合判断：根因不是单一的线性头太小，而是当前原子 Token 表示缺少对未见"
+                "汉字可泛化的显式部件与空间布局信息；最后层又进一步削弱了残留的字符身份信号。"
             ),
             "",
             "## 复现",

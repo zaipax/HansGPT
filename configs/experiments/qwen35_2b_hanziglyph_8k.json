@@ -1,7 +1,7 @@
 {
   "experiment_name": "Qwen3.5-2B HanziGlyph-8K 冻结线性探针",
   "model_id": "Qwen/Qwen3.5-2B-Base",
-  "model_revision": "b1485b2fa66dfa1287294f269f5fb618e03d52d7c",
+  "model_revision": "b1485b2fa6dfa1287294f269f5fb618e03d52d7c",
   "unihan_zip": "data/raw/unicode/Unihan.zip",
   "wikipedia_dump": "data/raw/zhwiki/zhwiki-latest-pages-articles-multistream1.xml-p1p187712.bz2",
   "font_path": "data/raw/fonts/noto-sans-cjk-sc/NotoSansCJKsc-Regular.otf",

@@ -144,12 +144,13 @@ binary_bitmap = probabilities >= threshold
 
 #### B. Noto Sans CJK SC 字体
 
-- 下载页面：[Noto CJK Releases](https://github.com/notofonts/noto-cjk/releases/latest)
+- 精确下载：[08_NotoSansCJKsc.zip（Sans 2.004，约 90MB）](https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/08_NotoSansCJKsc.zip)
+- 版本页面：[Noto Sans CJK Version 2.004](https://github.com/notofonts/noto-cjk/releases/tag/Sans2.004)
 - 项目仓库：[notofonts/noto-cjk](https://github.com/notofonts/noto-cjk)
 - 字体许可证：[SIL Open Font License 1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE)
 - 建议保存位置：`data/raw/fonts/`
 
-下载简体中文 Sans 版本，并保留 Regular 字重的 OTF/TTF 文件。实际实验必须记录字体文件名、版本号和 SHA-256，确保所有点阵可复现。
+解压后保留简体中文 Sans 的 Regular 字重 OTF 文件。不要使用仓库的通用 `releases/latest` 链接，因为当前最新发布页指向 Noto Serif CJK。实际实验必须记录字体文件名、版本号和 SHA-256，确保所有点阵可复现。
 
 #### C. 中文维基百科文章语料
 

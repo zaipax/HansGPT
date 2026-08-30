@@ -1023,7 +1023,7 @@ def build_report(
             "```bash",
             "git pull --ff-only origin main",
             "uv sync --frozen",
-            "uv run hansgpt-glyph-probe --config configs/experiments/qwen35_2b_hanziglyph_8k.json",
+            "uv run hansgpt-glyph-probe --config configs/experiments/qwen35_2b_hanziglyph_5k.json",
             "```",
             "",
             "完整配置、训练曲线、探针权重、逐实验指标和预测图保存在同一 artifacts 目录。",

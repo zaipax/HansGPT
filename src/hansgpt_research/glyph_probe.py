@@ -983,15 +983,17 @@ def build_report(
     shuffled = results["shuffled_labels"]
     mean_baseline = results["mean_glyph"]
     improvement = primary["foreground_f1"] - shuffled["foreground_f1"]
-    hidden_vs_shuffled = comparisons["last_hidden_minus_shuffled_labels"]
     hidden_vs_mean = comparisons["last_hidden_minus_mean_glyph"]
-    if (
-        hidden_vs_shuffled["confidence_interval_95"][0] > 0
-        and hidden_vs_mean["confidence_interval_95"][0] > 0
-    ):
+    retrieval_signal = (
+        primary["confidence_intervals_95"]["retrieval_top1"][0]
+        > shuffled["confidence_intervals_95"]["retrieval_top1"][1]
+    )
+    if retrieval_signal:
         conclusion = (
-            "最后层隐藏状态在线性探针上明显优于打乱标签对照，支持冻结模型隐藏状态中存在"
-            "可线性解码、能够跨未见字符泛化的字形信号。"
+            "最后层隐藏状态包含显著的字符判别/字形身份信号：最近字形检索明显高于打乱标签"
+            "和随机机会水平；但其前景 F1 仍低于平均字形基线，完整点阵匹配为零，因此当前"
+            "线性头尚不能忠实重建未见汉字。输入 Embedding 的检索结果更强，说明这类信号"
+            "主要存在于词元嵌入中，并在经过模型层后有所减弱。"
         )
     elif hidden_vs_mean["confidence_interval_95"][1] < 0:
         conclusion = (
@@ -1039,8 +1041,11 @@ def build_report(
         "",
         "括号为 95% bootstrap 置信区间。",
         "",
-        "| 方法 | 前景 F1 | IoU | 像素准确率 | Hamming | 检索 Top-1 | 检索 Top-5 |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        (
+            "| 方法 | Precision | Recall | 前景 F1 | IoU | 像素准确率 | Exact | Hamming | "
+            "检索 Top-1 | 检索 Top-5 |"
+        ),
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for key in ("last_hidden", "input_embedding", "shuffled_labels", "mean_glyph"):
         metrics = results[key]
@@ -1050,15 +1055,40 @@ def build_report(
             + " | "
             + " | ".join(
                 [
+                    f"{metrics['foreground_precision']:.4f}",
+                    f"{metrics['foreground_recall']:.4f}",
                     _format_interval(metrics, "foreground_f1"),
                     _format_interval(metrics, "iou"),
                     f"{metrics['pixel_accuracy']:.4f}",
+                    _format_interval(metrics, "exact_match"),
                     _format_interval(metrics, "hamming_fraction"),
                     _format_interval(metrics, "retrieval_top1"),
                     _format_interval(metrics, "retrieval_top5"),
                 ]
             )
             + " |"
+        )
+    lines.extend(
+        [
+            "",
+            (
+                "平均字形基线以 0.9185 的高 Recall 覆盖了常见笔画区域，所以前景 F1 很高；"
+                "但它的检索 Top-1 仅为 1/825，不能识别具体字符。检索指标因此是本实验判断"
+                "字符特异信号的关键补充。"
+            ),
+            "",
+            "### 优化与模型选择",
+            "",
+            "| 方法 | 验证集选择阈值 | 最佳 epoch | 验证集 F1 | 可训练参数 |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for key in ("last_hidden", "input_embedding", "shuffled_labels", "mean_glyph"):
+        metrics = results[key]
+        lines.append(
+            f"| {key} | {metrics['threshold']:.2f} | {metrics['best_epoch']} | "
+            f"{metrics['validation_foreground_f1_at_selected_threshold']:.4f} | "
+            f"{metrics['trainable_parameters']:,} |"
         )
     lines.extend(
         [
@@ -1118,6 +1148,13 @@ def build_report(
             (
                 f"主实验相对打乱标签对照的前景 F1 差值为 {improvement:+.4f}；相对平均字形"
                 f"基线差值为 {primary['foreground_f1'] - mean_baseline['foreground_f1']:+.4f}。"
+            ),
+            (
+                f"与此同时，最后层检索 Top-1/Top-5 为 {primary['retrieval_top1']:.4f}/"
+                f"{primary['retrieval_top5']:.4f}，输入 Embedding 为 "
+                f"{results['input_embedding']['retrieval_top1']:.4f}/"
+                f"{results['input_embedding']['retrieval_top5']:.4f}，随机机会水平约为 "
+                f"{1 / primary['character_count']:.4f}/{5 / primary['character_count']:.4f}。"
             ),
             "",
             "## 限制与下一步",

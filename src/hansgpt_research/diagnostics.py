@@ -869,7 +869,8 @@ def train_autoencoder(
                 break
     if best_state is None:
         raise RuntimeError("Autoencoder training produced no checkpoint")
-    model.load_state_dict(best_state).eval()
+    model.load_state_dict(best_state)
+    model.eval()
     with torch.inference_mode():
         validation_probabilities = model(images[validation_tensor])[0].sigmoid().cpu().numpy()
         test_tensor = torch.from_numpy(test_indices).to("cuda")
@@ -978,7 +979,8 @@ def train_latent_mapper(
                 break
     if best_state is None:
         raise RuntimeError("Latent mapper training produced no checkpoint")
-    mapper.load_state_dict(best_state).eval()
+    mapper.load_state_dict(best_state)
+    mapper.eval()
     latent_mean_tensor = torch.from_numpy(latent_mean).to("cuda")
     latent_std_tensor = torch.from_numpy(latent_std).to("cuda")
 

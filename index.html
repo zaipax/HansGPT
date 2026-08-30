@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="实时把输入的文字转换成 32×32 汉字点阵，按 10 列 18 行显示"
+      content="实时把输入的文字转换成 32×32 汉字点阵，每行显示 20 个，行数不限"
     />
     <title>汉字点阵排字板</title>
     <link rel="stylesheet" href="styles.css" />
@@ -42,7 +42,7 @@
           >我爱你</textarea>
 
           <div class="editor-footer">
-            <span id="character-count" aria-live="polite">3 / 180 字</span>
+            <span id="character-count" aria-live="polite">3 字 · 1 行</span>
             <button id="clear-button" type="button">清空</button>
           </div>
         </section>
@@ -50,14 +50,14 @@
         <div class="input-help" id="input-help">
           <span aria-hidden="true">↵</span>
           <p>
-            连续输入会每 10 字自动换行；按回车可提前换到下一行。最多显示
-            180 个汉字位。
+            连续输入会每 20 字自动换行；按回车可提前换到下一行。点阵画布会随
+            输入内容持续增加行数。
           </p>
         </div>
 
         <footer class="input-footer">
           <span>32 × 32 / 字</span>
-          <span>10 列 × 18 行</span>
+          <span>20 列 × ∞ 行</span>
         </footer>
       </aside>
 
@@ -69,8 +69,8 @@
           </div>
           <div class="spec-list" aria-label="画布规格">
             <span><b>32 × 32</b> 点阵</span>
-            <span><b>10</b> 列</span>
-            <span><b>18</b> 行</span>
+            <span><b>20</b> 个 / 行</span>
+            <span><b>∞</b> 行</span>
           </div>
         </header>
 
@@ -78,7 +78,7 @@
           <section
             id="matrix-board"
             class="matrix-board"
-            aria-label="10 列 18 行的汉字点阵画布"
+            aria-label="每行 20 个、行数不限的汉字点阵画布"
           ></section>
         </div>
       </main>

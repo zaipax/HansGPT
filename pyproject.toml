@@ -1,0 +1,49 @@
+[project]
+name = "hansgpt-research"
+version = "0.1.0"
+description = "Frozen-language-model probes for decoding Chinese characters as 32x32 binary glyphs"
+readme = "RESEARCH_PLAN.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "accelerate>=1.10,<2",
+    "datasets>=4,<5",
+    "fonttools>=4.59,<5",
+    "huggingface-hub>=0.34,<2",
+    "mwparserfromhell>=0.7,<1",
+    "numpy>=2,<3",
+    "opencc-python-reimplemented>=0.1.7,<1",
+    "pillow>=11,<13",
+    "pyarrow>=21,<24",
+    "regex>=2025.7.34",
+    "rich>=14,<15",
+    "safetensors>=0.6,<1",
+    "torch>=2.8,<3",
+    "torchvision>=0.23,<1",
+    "tqdm>=4.67,<5",
+    "transformers>=4.57,<6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.12,<1",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

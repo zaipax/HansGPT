@@ -5,6 +5,7 @@ from hansgpt_research.glyph_probe import (
     ExperimentConfig,
     _split_indices,
     choose_threshold,
+    paired_f1_difference,
 )
 
 
@@ -44,3 +45,13 @@ def test_dataset_bundle_has_character_identity() -> None:
         splits=np.asarray([2], dtype=np.uint8),
     )
     assert chr(bundle.codepoints[0]) == bundle.characters[0]
+
+
+def test_paired_f1_difference_detects_better_predictions() -> None:
+    targets = np.asarray([[1, 0, 1], [0, 1, 0]], dtype=np.uint8)
+    perfect = targets.astype(np.float32)
+    empty = np.zeros_like(perfect)
+    comparison = paired_f1_difference(perfect, 0.5, empty, 0.5, targets, 100, 7)
+    assert comparison["foreground_f1_difference"] == 1.0
+    assert comparison["confidence_interval_95"] == [1.0, 1.0]
+    assert comparison["bootstrap_probability_first_greater"] == 1.0

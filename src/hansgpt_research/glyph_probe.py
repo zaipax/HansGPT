@@ -460,7 +460,7 @@ def extract_features(
     metadata = {
         "model_id": config.model_id,
         "requested_revision": config.model_revision,
-        "resolved_revision": getattr(model.config, "_commit_hash", None),
+        "resolved_revision": getattr(model.config, "_commit_hash", None) or config.model_revision,
         "model_class": type(model).__name__,
         "hidden_size": int(features["last_hidden"].shape[1]),
         "dtype": "bfloat16",
@@ -583,6 +583,67 @@ def _bootstrap_intervals(
     }
 
 
+def _per_character_counts(
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    threshold: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    prediction = probabilities >= threshold
+    truth = targets.astype(bool)
+    return (
+        np.logical_and(prediction, truth).sum(axis=1),
+        np.logical_and(prediction, ~truth).sum(axis=1),
+        np.logical_and(~prediction, truth).sum(axis=1),
+    )
+
+
+def paired_f1_difference(
+    first_probabilities: np.ndarray,
+    first_threshold: float,
+    second_probabilities: np.ndarray,
+    second_threshold: float,
+    targets: np.ndarray,
+    samples: int,
+    seed: int,
+) -> dict[str, Any]:
+    first_tp, first_fp, first_fn = _per_character_counts(
+        first_probabilities, targets, first_threshold
+    )
+    second_tp, second_fp, second_fn = _per_character_counts(
+        second_probabilities, targets, second_threshold
+    )
+
+    def f1(tp: np.ndarray, fp: np.ndarray, fn: np.ndarray) -> np.ndarray:
+        return 2 * tp / np.maximum(2 * tp + fp + fn, 1)
+
+    first_f1 = float(f1(first_tp.sum(), first_fp.sum(), first_fn.sum()))
+    second_f1 = float(f1(second_tp.sum(), second_fp.sum(), second_fn.sum()))
+    rng = np.random.default_rng(seed)
+    draw = rng.integers(0, len(targets), size=(samples, len(targets)))
+    first_bootstrap = f1(
+        first_tp[draw].sum(axis=1),
+        first_fp[draw].sum(axis=1),
+        first_fn[draw].sum(axis=1),
+    )
+    second_bootstrap = f1(
+        second_tp[draw].sum(axis=1),
+        second_fp[draw].sum(axis=1),
+        second_fn[draw].sum(axis=1),
+    )
+    difference = first_bootstrap - second_bootstrap
+    return {
+        "first_foreground_f1": first_f1,
+        "second_foreground_f1": second_f1,
+        "foreground_f1_difference": first_f1 - second_f1,
+        "confidence_interval_95": [
+            float(np.quantile(difference, 0.025)),
+            float(np.quantile(difference, 0.975)),
+        ],
+        "bootstrap_probability_first_greater": float((difference > 0).mean()),
+        "bootstrap_samples": samples,
+    }
+
+
 def pixel_metrics(
     probabilities: np.ndarray,
     targets: np.ndarray,
@@ -677,12 +738,17 @@ def train_probe(
     random.seed(config.seed)
     device = torch.device("cuda")
     print(f"[training:{name}] Starting linear probe", flush=True)
-    feature_tensor = torch.from_numpy(np.asarray(features).astype(np.float32)).to(device)
-    target_array = bundle.bitmaps.astype(np.float32)
-    training_targets = target_array.copy()
     train_indices = np.flatnonzero(bundle.splits == 0)
     validation_indices = np.flatnonzero(bundle.splits == 1)
     test_indices = np.flatnonzero(bundle.splits == 2)
+    feature_array = np.asarray(features).astype(np.float32)
+    feature_mean = feature_array[train_indices].mean(axis=0, keepdims=True)
+    feature_std = feature_array[train_indices].std(axis=0, keepdims=True)
+    feature_std = np.maximum(feature_std, 1e-6)
+    feature_array = (feature_array - feature_mean) / feature_std
+    feature_tensor = torch.from_numpy(feature_array).to(device)
+    target_array = bundle.bitmaps.astype(np.float32)
+    training_targets = target_array.copy()
     if shuffle_training_labels:
         rng = np.random.default_rng(config.seed + 1)
         training_targets[train_indices] = training_targets[rng.permutation(train_indices)]
@@ -769,7 +835,7 @@ def train_probe(
     head.eval()
     validation_probabilities = _predict_probabilities(
         head,
-        feature_tensor[validation_indices],
+        feature_tensor[validation_index_tensor],
         config.train_batch_size,
     )
     threshold, validation_f1 = choose_threshold(
@@ -798,6 +864,8 @@ def train_probe(
             "validation_foreground_f1_at_selected_threshold": validation_f1,
             "positive_weight": float(positive_weight),
             "training_labels_shuffled": shuffle_training_labels,
+            "feature_standardization": "training-split per-dimension mean and standard deviation",
+            "feature_standard_deviation_min": float(feature_std.min()),
             "frequency_buckets": _frequency_bucket_metrics(
                 test_probabilities,
                 target_array[test_indices],
@@ -809,7 +877,14 @@ def train_probe(
     )
     probe_dir = output_dir / "probes" / name
     probe_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(best_state, probe_dir / "head.pt")
+    torch.save(
+        {
+            "state_dict": best_state,
+            "feature_mean": torch.from_numpy(feature_mean.squeeze(0)),
+            "feature_std": torch.from_numpy(feature_std.squeeze(0)),
+        },
+        probe_dir / "head.pt",
+    )
     _json_dump(probe_dir / "metrics.json", metrics)
     np.save(probe_dir / "test_probabilities.npy", test_probabilities.astype(np.float16))
     print(
@@ -897,16 +972,27 @@ def build_report(
     dataset_stats: dict[str, Any],
     extraction_metadata: dict[str, Any],
     results: dict[str, dict[str, Any]],
+    comparisons: dict[str, dict[str, Any]],
     output_dir: Path,
 ) -> Path:
     primary = results["last_hidden"]
     shuffled = results["shuffled_labels"]
     mean_baseline = results["mean_glyph"]
     improvement = primary["foreground_f1"] - shuffled["foreground_f1"]
-    if improvement > 0.05:
+    hidden_vs_shuffled = comparisons["last_hidden_minus_shuffled_labels"]
+    hidden_vs_mean = comparisons["last_hidden_minus_mean_glyph"]
+    if (
+        hidden_vs_shuffled["confidence_interval_95"][0] > 0
+        and hidden_vs_mean["confidence_interval_95"][0] > 0
+    ):
         conclusion = (
             "最后层隐藏状态在线性探针上明显优于打乱标签对照，支持冻结模型隐藏状态中存在"
             "可线性解码、能够跨未见字符泛化的字形信号。"
+        )
+    elif hidden_vs_mean["confidence_interval_95"][1] < 0:
+        conclusion = (
+            "最后层隐藏状态的线性探针显著低于训练集平均字形基线；即使它可能略高于"
+            "打乱标签对照，本轮结果仍不支持最后层存在有实际效用的跨未见字符字形信号。"
         )
     else:
         conclusion = (
@@ -940,6 +1026,7 @@ def build_report(
         "- 目标：Noto Sans CJK SC Regular 确定性渲染的 32×32 二值点阵。",
         "- 主实验：冻结模型最后层隐藏状态 + 单线性层。",
         "- 对照：输入 Embedding 线性探针、训练标签随机打乱、训练集平均字形。",
+        "- 特征标准化：只使用训练字符计算逐维均值与标准差，验证/测试不参与统计。",
         "- 损失：加权 BCEWithLogitsLoss + Dice Loss。",
         "- 阈值：只用验证集在 0.05～0.95 网格中选择。",
         f"- 置信区间：按测试字符 bootstrap {config.bootstrap_samples:,} 次，95% 区间。",
@@ -968,6 +1055,24 @@ def build_report(
                 ]
             )
             + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 配对差值检验",
+            "",
+            "正值表示前一个方法更好；区间按同一批测试字符配对 bootstrap。",
+            "",
+            "| 对比 | 前景 F1 差值 | 95% CI | P(差值>0) |",
+            "|---|---:|---:|---:|",
+        ]
+    )
+    for name, comparison in comparisons.items():
+        interval = comparison["confidence_interval_95"]
+        lines.append(
+            f"| {name} | {comparison['foreground_f1_difference']:+.4f} | "
+            f"[{interval[0]:+.4f}, {interval[1]:+.4f}] | "
+            f"{comparison['bootstrap_probability_first_greater']:.3f} |"
         )
     lines.extend(
         [
@@ -1061,7 +1166,27 @@ def run_experiment(config: ExperimentConfig) -> Path:
         shuffle_training_labels=True,
     )
     results["mean_glyph"], probabilities["mean_glyph"] = mean_glyph_baseline(dataset, config)
-    _json_dump(output_dir / "metrics.json", results)
+    test_targets = dataset.bitmaps[dataset.splits == 2]
+    comparison_pairs = (
+        ("last_hidden", "shuffled_labels"),
+        ("last_hidden", "mean_glyph"),
+        ("last_hidden", "input_embedding"),
+        ("input_embedding", "mean_glyph"),
+        ("input_embedding", "shuffled_labels"),
+    )
+    comparisons = {
+        f"{first}_minus_{second}": paired_f1_difference(
+            probabilities[first],
+            results[first]["threshold"],
+            probabilities[second],
+            results[second]["threshold"],
+            test_targets,
+            config.bootstrap_samples,
+            config.seed + 100 + pair_index,
+        )
+        for pair_index, (first, second) in enumerate(comparison_pairs)
+    }
+    _json_dump(output_dir / "metrics.json", {"methods": results, "comparisons": comparisons})
     save_prediction_sheet(
         dataset,
         probabilities["last_hidden"],
@@ -1069,7 +1194,14 @@ def run_experiment(config: ExperimentConfig) -> Path:
         Path(config.font_path),
         output_dir / "predictions.png",
     )
-    report_path = build_report(config, dataset_stats, extraction_metadata, results, output_dir)
+    report_path = build_report(
+        config,
+        dataset_stats,
+        extraction_metadata,
+        results,
+        comparisons,
+        output_dir,
+    )
     print(f"[experiment] Report written to {report_path}", flush=True)
     return report_path
 

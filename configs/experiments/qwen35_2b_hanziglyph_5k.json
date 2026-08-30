@@ -16,7 +16,7 @@
   "render_threshold": 128,
   "feature_batch_size": 128,
   "train_batch_size": 256,
-  "max_epochs": 120,
+  "max_epochs": 300,
   "early_stopping_patience": 15,
   "learning_rate": 0.001,
   "weight_decay": 0.0001,

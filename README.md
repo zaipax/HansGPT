@@ -2,6 +2,10 @@
 
 一个零依赖的实时汉字点阵前端项目。左侧输入文字，右侧立即转换成 32×32 点阵字形。
 
+仓库同时包含冻结语言模型隐藏状态到 32×32 汉字点阵的研究代码。完整方案见
+[`RESEARCH_PLAN.md`](RESEARCH_PLAN.md)，首轮 Qwen3.5-2B 实验结果见
+[`EXPERIMENT_REPORT_QWEN35_2B.md`](EXPERIMENT_REPORT_QWEN35_2B.md)。
+
 ## 功能
 
 - 左右分栏的输入与预览界面

@@ -10,6 +10,9 @@
 以 32×32 二值字形为输入、经共享视觉编码器与因果模型预测下一格 1024 个二值像素的方案见
 [`HANSGPT_MODEL_AND_DATA_DESIGN.md`](HANSGPT_MODEL_AND_DATA_DESIGN.md)。该文档是下一阶段设计提案。
 
+服务器上的中文维基下载、严格中文过滤和 32×32 二值字形数据准备流程见
+[`CHINESE_CORPUS_PILOT.md`](CHINESE_CORPUS_PILOT.md)。
+
 ## 功能
 
 - 左右分栏的输入与预览界面

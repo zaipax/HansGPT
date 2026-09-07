@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import platform
 
@@ -10,6 +11,22 @@ import transformers
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--cpu", action="store_true", help="Check CPU preprocessing without GPU use"
+    )
+    args = parser.parse_args()
+    if args.cpu:
+        result = torch.ones((16, 16)) @ torch.ones((16, 16))
+        report = {
+            "mode": "cpu_preprocessing",
+            "cpu_matmul_finite": bool(torch.isfinite(result).all().item()),
+            "python": platform.python_version(),
+            "pytorch": torch.__version__,
+            "transformers": transformers.__version__,
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        return
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable; do not start model extraction or training")
 

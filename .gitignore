@@ -3,6 +3,7 @@
 *.log
 
 # Local environment and secrets
+SERVER_CONNECTIONS.md
 .venv/
 .env
 .env.*

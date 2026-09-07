@@ -1,0 +1,297 @@
+"""Small CPU/GPU integration tests, executed in the server's project uv environment."""
+
+import json
+from dataclasses import replace
+
+import numpy as np
+import pytest
+import torch
+from torch import nn
+
+from hansgpt_research.glyph_lm import (
+    GlyphGPT,
+    GlyphSequenceDataset,
+    ModelConfig,
+    collate_glyph_sequences,
+    pixel_bce_loss,
+)
+
+
+def small_config(**overrides) -> ModelConfig:
+    return replace(
+        ModelConfig(
+            hidden_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            intermediate_size=64,
+            max_position_embeddings=16,
+            glyph_encode_chunk_size=4,
+        ),
+        **overrides,
+    )
+
+
+def binary_input(length=5):
+    return torch.randint(0, 2, (1, length, 1, 32, 32), dtype=torch.uint8)
+
+
+def test_default_architecture_has_exact_agreed_parameter_count():
+    model = GlyphGPT(ModelConfig())
+    assert sum(parameter.numel() for parameter in model.parameters()) == 78_118_368
+    assert model.backbone.embed_tokens is None
+    assert model.pixel_head.out_features == 1024
+    assert model.pixel_head.bias is not None
+
+
+def test_future_tiles_cannot_change_prefix_predictions_in_training_mode():
+    torch.manual_seed(13)
+    model = GlyphGPT(small_config()).train()
+    original = binary_input()
+    changed = original.clone()
+    changed[:, 3:] = 1 - changed[:, 3:]
+    with torch.no_grad():
+        first = model(original)
+        second = model(changed)
+    assert first.shape == original.shape
+    torch.testing.assert_close(first[:, :3], second[:, :3], atol=2e-6, rtol=2e-5)
+    assert not torch.allclose(first[:, 3:], second[:, 3:])
+    assert not any(isinstance(module, nn.Embedding) for module in model.modules())
+    assert not any(
+        isinstance(module, nn.modules.batchnorm._BatchNorm) for module in model.modules()
+    )
+
+
+def test_repeated_pixel_encoding_preserves_logits_and_cnn_gradients():
+    torch.manual_seed(17)
+    deduplicated = GlyphGPT(small_config(deduplicate_glyphs=True))
+    direct = GlyphGPT(small_config(deduplicate_glyphs=False))
+    direct.load_state_dict(deduplicated.state_dict())
+    glyphs = binary_input(3)[:, [0, 1, 0, 2, 1]]
+    targets = binary_input(5)
+    mask = torch.ones((1, 5), dtype=torch.bool)
+    logits_deduplicated = deduplicated(glyphs)
+    logits_direct = direct(glyphs)
+    torch.testing.assert_close(logits_deduplicated, logits_direct, atol=2e-6, rtol=2e-5)
+    pixel_bce_loss(logits_deduplicated, targets, mask).backward()
+    pixel_bce_loss(logits_direct, targets, mask).backward()
+    for (name_a, weight_a), (name_b, weight_b) in zip(
+        deduplicated.glyph_encoder.named_parameters(),
+        direct.glyph_encoder.named_parameters(),
+        strict=True,
+    ):
+        assert name_a == name_b
+        assert weight_a.grad is not None and weight_a.grad.abs().sum() > 0
+        torch.testing.assert_close(weight_a.grad, weight_b.grad, atol=2e-7, rtol=2e-4)
+
+
+@pytest.mark.parametrize("bad_value", [0.5, -1.0, 2.0, float("nan")])
+def test_model_and_loss_reject_nonbinary_tiles(bad_value):
+    model = GlyphGPT(small_config())
+    invalid = binary_input(2).float()
+    invalid[0, 0, 0, 0, 0] = bad_value
+    with pytest.raises(ValueError, match="binary"):
+        model(invalid)
+    with pytest.raises(ValueError, match="binary"):
+        pixel_bce_loss(torch.zeros_like(invalid), invalid, torch.ones((1, 2), dtype=torch.bool))
+
+
+def test_loss_is_next_tile_pixel_mean_and_masks_padding():
+    logits = torch.full((1, 2, 1, 32, 32), -2.0, requires_grad=True)
+    targets = torch.zeros_like(logits)
+    targets[:, 0, :, :16] = 1
+    mask = torch.tensor([[True, False]])
+    loss = pixel_bce_loss(logits, targets, mask)
+    expected = (torch.nn.functional.softplus(torch.tensor(-2.0)) + 1.0).item()
+    assert loss.item() == pytest.approx(expected)
+    loss.backward()
+    assert logits.grad[:, 0].abs().sum() > 0
+    assert logits.grad[:, 1].abs().sum() == 0
+
+
+def test_incremental_cache_matches_full_prefix_and_generation_uses_same_cnn():
+    torch.manual_seed(19)
+    model = GlyphGPT(small_config()).eval()
+    glyphs = binary_input(4)
+    with torch.no_grad():
+        full = model(glyphs)
+        prefix, cache = model(glyphs[:, :3], use_cache=True, return_cache=True)
+        incremental, _ = model(
+            glyphs[:, 3:], past_key_values=cache, use_cache=True, return_cache=True
+        )
+    torch.testing.assert_close(full[:, :3], prefix, atol=2e-6, rtol=2e-5)
+    torch.testing.assert_close(full[:, 3:], incremental, atol=2e-6, rtol=2e-5)
+    calls = []
+    hook = model.glyph_encoder.register_forward_pre_hook(
+        lambda _module, args: calls.append(args[0].detach().clone())
+    )
+    generated = model.generate(glyphs[:, :2], max_new_tokens=3)
+    hook.remove()
+    assert generated.shape == (1, 3, 1, 32, 32)
+    assert generated.dtype == torch.uint8
+    assert ((generated == 0) | (generated == 1)).all()
+    assert len(calls) == 3
+    torch.testing.assert_close(calls[1], generated[:, 0])
+    torch.testing.assert_close(calls[2], generated[:, 1])
+    recomputed = model.generate(glyphs[:, :2], max_new_tokens=3, use_cache=False)
+    torch.testing.assert_close(generated, recomputed, atol=0, rtol=0)
+
+
+def test_generation_sliding_window_recompute_matches_uncached():
+    torch.manual_seed(23)
+    model = GlyphGPT(small_config(max_position_embeddings=3)).eval()
+    prompt = binary_input(2)
+    cached = model.generate(prompt, max_new_tokens=4)
+    direct = model.generate(prompt, max_new_tokens=4, use_cache=False)
+    torch.testing.assert_close(cached, direct, atol=0, rtol=0)
+
+
+def test_model_config_and_checkpoint_roundtrip(tmp_path):
+    torch.manual_seed(29)
+    model = GlyphGPT(small_config()).eval()
+    glyphs = binary_input(3)
+    payload = {"model_config": model.config.to_dict(), "model": model.state_dict()}
+    checkpoint = tmp_path / "model.pt"
+    torch.save(payload, checkpoint)
+    loaded = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    restored = GlyphGPT(ModelConfig.from_dict(loaded["model_config"])).eval()
+    restored.load_state_dict(loaded["model"])
+    with torch.no_grad():
+        torch.testing.assert_close(model(glyphs), restored(glyphs), atol=0, rtol=0)
+
+
+def make_corpus(tmp_path):
+    bitmaps = np.zeros((9, 32, 32), dtype=np.uint8)
+    for index in range(1, len(bitmaps)):
+        bitmaps[index, 0, :index] = 1
+    np.savez_compressed(tmp_path / "glyph_bank.npz", bitmaps=bitmaps)
+    (tmp_path / "glyph_inventory.json").write_text(
+        json.dumps(
+            {
+                "controls": {"0": "PAD", "1": "BOS", "2": "EOS", "3": "NEWLINE"},
+                "characters": {"春": 4, "风": 5, "吹": 6, "过": 7, "山": 8},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    documents = [[1, 4, 5, 6, 7, 8, 2], [1, 8, 7, 2], [1, 4, 2]]
+    offsets = np.concatenate(([0], np.cumsum([len(doc) for doc in documents])))
+    np.save(tmp_path / "train.offsets.npy", offsets)
+    np.array([asset for doc in documents for asset in doc], dtype="<u2").tofile(
+        tmp_path / "train.uint16"
+    )
+    return documents, bitmaps
+
+
+@pytest.mark.parametrize("sequence_length", [1, 2, 3, 4, 6, 8])
+def test_document_chunks_cover_every_shifted_pair_exactly_once(tmp_path, sequence_length):
+    documents, bitmaps = make_corpus(tmp_path)
+    dataset = GlyphSequenceDataset(tmp_path, "train", sequence_length)
+    pairs = []
+    target_count = 0
+    for example in dataset:
+        valid = example["loss_mask"]
+        assert torch.equal(valid, example["attention_mask"])
+        assert example["glyphs"].shape == (sequence_length, 1, 32, 32)
+        assert example["targets"].shape == (sequence_length, 1, 32, 32)
+        assert (example["glyphs"][~valid] == 0).all()
+        assert (example["targets"][~valid] == 0).all()
+        for input_tile, target_id, target_tile in zip(
+            example["glyphs"][valid],
+            example["target_ids"][valid],
+            example["targets"][valid],
+            strict=True,
+        ):
+            input_id = int(input_tile.sum())  # Fixture pixels uniquely identify each asset.
+            pairs.append((input_id, int(target_id)))
+            np.testing.assert_array_equal(target_tile[0].numpy(), bitmaps[int(target_id)])
+        target_count += int(valid.sum())
+    expected = [(doc[index], doc[index + 1]) for doc in documents for index in range(len(doc) - 1)]
+    assert pairs == expected
+    assert target_count == dataset.target_count == sum(len(doc) - 1 for doc in documents)
+    assert (2, 1) not in pairs  # Independent documents never form a training transition.
+    assert dataset.gallery_ids == [4, 5, 6, 7, 8]
+    assert dataset.control_ids == {"PAD": 0, "BOS": 1, "EOS": 2, "NEWLINE": 3}
+
+
+def test_asset_renumbering_does_not_change_model_pixels(tmp_path):
+    _, bitmaps = make_corpus(tmp_path)
+    original = GlyphSequenceDataset(tmp_path, "train", 4)[0]
+    # Swap two corpus addresses, their bitmaps, and their metadata together.
+    indices = np.arange(len(bitmaps))
+    indices[[4, 5]] = indices[[5, 4]]
+    tokens = np.fromfile(tmp_path / "train.uint16", dtype="<u2")
+    indices[tokens].astype("<u2").tofile(tmp_path / "train.uint16")
+    np.savez_compressed(tmp_path / "glyph_bank.npz", bitmaps=bitmaps[indices])
+    inventory_path = tmp_path / "glyph_inventory.json"
+    inventory = json.loads(inventory_path.read_text("utf-8"))
+    inventory["characters"] = {
+        char: int(indices[asset]) for char, asset in inventory["characters"].items()
+    }
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    renumbered = GlyphSequenceDataset(tmp_path, "train", 4)[0]
+    assert not torch.equal(original["target_ids"], renumbered["target_ids"])
+    torch.testing.assert_close(original["glyphs"], renumbered["glyphs"], atol=0, rtol=0)
+    torch.testing.assert_close(original["targets"], renumbered["targets"], atol=0, rtol=0)
+
+
+def test_dataset_rejects_wrong_document_boundaries(tmp_path):
+    make_corpus(tmp_path)
+    tokens = np.fromfile(tmp_path / "train.uint16", dtype="<u2")
+    tokens[0] = 4
+    tokens.tofile(tmp_path / "train.uint16")
+    with pytest.raises(ValueError, match="begin with BOS"):
+        GlyphSequenceDataset(tmp_path, "train", 4)
+
+
+@pytest.mark.parametrize("padding_multiple,expected_length", [(1, 6), (4, 8), (8, 8), (32, 16)])
+def test_dynamic_collation_preserves_all_targets_and_document_rows(
+    tmp_path, padding_multiple, expected_length
+):
+    documents, _ = make_corpus(tmp_path)
+    dataset = GlyphSequenceDataset(tmp_path, "train", sequence_length=16)
+    samples = [dataset[index] for index in range(len(dataset))]
+    batch = collate_glyph_sequences(samples, pad_to_multiple_of=padding_multiple)
+    assert batch["glyphs"].shape == (3, expected_length, 1, 32, 32)
+    assert batch["targets"].shape == batch["glyphs"].shape
+    assert int(batch["loss_mask"].sum()) == dataset.target_count
+    for index, document in enumerate(documents):
+        mask = batch["loss_mask"][index]
+        assert batch["target_ids"][index][mask].tolist() == document[1:]
+        for name in samples[index]:
+            torch.testing.assert_close(batch[name][index], samples[index][name][:expected_length])
+    assert ((batch["glyphs"] == 0) | (batch["glyphs"] == 1)).all()
+    assert ((batch["targets"] == 0) | (batch["targets"] == 1)).all()
+
+
+def test_padding_trim_does_not_change_valid_next_tile_logits(tmp_path):
+    make_corpus(tmp_path)
+    dataset = GlyphSequenceDataset(tmp_path, "train", sequence_length=16)
+    samples = [dataset[0], dataset[1]]
+    full = collate_glyph_sequences(samples, pad_to_multiple_of=16)
+    trimmed = collate_glyph_sequences(samples)
+    model = GlyphGPT(small_config()).eval()
+    with torch.no_grad():
+        full_logits = model(full["glyphs"], attention_mask=full["attention_mask"])
+        trimmed_logits = model(trimmed["glyphs"], attention_mask=trimmed["attention_mask"])
+    torch.testing.assert_close(
+        full_logits[full["loss_mask"]],
+        trimmed_logits[trimmed["loss_mask"]],
+        atol=2e-6,
+        rtol=2e-5,
+    )
+
+
+def test_dynamic_collator_never_trims_a_masked_context_hole():
+    sample = {
+        "glyphs": binary_input(16)[0],
+        "targets": binary_input(16)[0],
+        "attention_mask": torch.tensor([True] + [False] * 9 + [True] + [False] * 5),
+        "loss_mask": torch.tensor([True] + [False] * 15),
+        "target_ids": torch.arange(16),
+    }
+    batch = collate_glyph_sequences([sample], pad_to_multiple_of=1)
+    assert batch["glyphs"].shape[1] == 11
+    assert int(batch["attention_mask"].sum()) == 2
+    assert int(batch["loss_mask"].sum()) == 1

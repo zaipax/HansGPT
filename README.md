@@ -13,6 +13,9 @@
 服务器上的中文维基下载、严格中文过滤和 32×32 二值字形数据准备流程见
 [`CHINESE_CORPUS_PILOT.md`](CHINESE_CORPUS_PILOT.md)。
 
+GPU 0 上从头训练、断点恢复与完整评估的固定实验协议见
+[`BINARY_GPT_EXPERIMENT.md`](BINARY_GPT_EXPERIMENT.md)。
+
 ## 功能
 
 - 左右分栏的输入与预览界面

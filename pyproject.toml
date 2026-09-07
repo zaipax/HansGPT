@@ -17,8 +17,8 @@ dependencies = [
     "regex>=2025.7.34",
     "rich>=14,<15",
     "safetensors>=0.6,<1",
-    "torch>=2.8,<3",
-    "torchvision>=0.23,<1",
+    "torch==2.8.0",
+    "torchvision==0.23.0",
     "tqdm>=4.67,<5",
     "transformers>=4.57,<6",
 ]

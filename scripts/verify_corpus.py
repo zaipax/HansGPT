@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pyarrow.parquet as pq
 
-from hansgpt_research.prepare_corpus import ALLOWED, CONTROL_NAMES, digest_file
+from hansgpt_research.prepare_corpus import ALLOWED, CONTROL_NAMES, canonical_han, digest_file
 
 
 def main() -> None:
@@ -32,13 +32,18 @@ def main() -> None:
         raise ValueError("Glyphs are not binary uint8 tiles")
     page_splits = {}
     seen_hashes = set()
+    seen_canonical_hashes = set()
     counts = {}
     examples = []
     for split in ("train", "validation", "test"):
-        records = pq.read_table(directory / f"{split}.parquet").to_pylist()
-        ids = np.fromfile(directory / f"{split}.uint16", dtype="<u2")
+        parquet = pq.ParquetFile(directory / f"{split}.parquet")
+        records = (
+            row for batch in parquet.iter_batches(batch_size=1024) for row in batch.to_pylist()
+        )
+        ids = np.memmap(directory / f"{split}.uint16", dtype="<u2", mode="r")
         offsets = np.load(directory / f"{split}.offsets.npy", allow_pickle=False)
-        if len(offsets) != len(records) + 1 or offsets[0] != 0 or offsets[-1] != len(ids):
+        paragraphs = parquet.metadata.num_rows
+        if len(offsets) != paragraphs + 1 or offsets[0] != 0 or offsets[-1] != len(ids):
             raise ValueError("Broken sequence offsets")
         if not (np.diff(offsets) > 2).all() or int(ids.max()) >= len(bitmaps):
             raise ValueError("Invalid sequence lengths or image references")
@@ -50,6 +55,20 @@ def main() -> None:
             if actual_hash != record["text_sha256"] or actual_hash in seen_hashes:
                 raise ValueError("Text checksum mismatch or duplicate paragraph")
             seen_hashes.add(actual_hash)
+            canonical_hash = hashlib.sha256(canonical_han(text).encode()).hexdigest()
+            if canonical_hash in seen_canonical_hashes:
+                raise ValueError("Punctuation-only duplicate paragraph")
+            seen_canonical_hashes.add(canonical_hash)
+            if manifest["source"].get("provider") == "ModelScope":
+                if record["source_revision_id"] is not None:
+                    raise ValueError("Mirror does not supply an article revision ID")
+                if (
+                    record["source_file_revision"] != manifest["source"]["revision"]
+                    or record["source_snapshot"] != manifest["source"]["snapshot"]
+                    or record["source_file"]
+                    not in {Path(file["path"]).name for file in manifest["source"]["files"]}
+                ):
+                    raise ValueError("Source file provenance does not match manifest")
             page_id = record["source_page_id"]
             if page_id in page_splits and page_splits[page_id] != split:
                 raise ValueError("Source page crosses dataset splits")
@@ -60,7 +79,12 @@ def main() -> None:
                 raise ValueError("Binary asset references do not round-trip to the text")
             if len(examples) < 3 and split == "train":
                 examples.append(text[:160])
-        counts[split] = {"paragraphs": len(records), "grid_tokens": len(ids)}
+        counts[split] = {"paragraphs": paragraphs, "grid_tokens": len(ids)}
+        if (
+            paragraphs != manifest["splits"][split]["paragraphs"]
+            or len(ids) != manifest["splits"][split]["grid_tokens_including_bos_eos"]
+        ):
+            raise ValueError("Export counts do not match manifest")
     report = {
         "passed": True,
         "checks": [
@@ -70,7 +94,13 @@ def main() -> None:
             "sequence_alignment",
             "page_split",
             "exact_dedup",
+            "punctuation_variant_dedup",
+            "source_file_provenance",
         ],
+        "near_duplicate_note": (
+            "Preparation uses approximate shingle candidates with exact Jaccard confirmation; "
+            "this independent verifier does not claim exhaustive near-duplicate detection."
+        ),
         "splits": counts,
         "glyph_shape": list(bitmaps.shape),
         "examples": examples,

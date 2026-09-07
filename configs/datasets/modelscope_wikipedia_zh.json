@@ -1,0 +1,21 @@
+{
+  "provider": "ModelScope",
+  "dataset": "AI-ModelScope/wikipedia",
+  "dataset_id": 33223,
+  "subset": "20231101.zh",
+  "snapshot": "20231101",
+  "revision": "af6f00069c4a886b60b7b08d80882efde42c5432",
+  "upstream_dataset": "wikimedia/wikipedia",
+  "upstream_revision": "b04c8d1ceb2f5cd4588862100d08de323dccfbaa",
+  "upstream_url": "https://huggingface.co/datasets/wikimedia/wikipedia",
+  "license": "Underlying Wikipedia text: CC BY-SA and GFDL; retain page attribution and inspect page-specific rights.",
+  "license_discrepancy": "ModelScope metadata labels the mirror Apache-2.0, whereas its upstream dataset card identifies Wikipedia CC BY-SA/GFDL. The mirror label does not replace the underlying content license.",
+  "files": [
+    {"path": "20231101.zh/train-00000-of-00006.parquet", "size": 587109027, "sha256": "853ddf4a138c792ad7386d6de831788f96326c03e1e3349f7a315498392e8b56"},
+    {"path": "20231101.zh/train-00001-of-00006.parquet", "size": 263629009, "sha256": "038b08e5aae38b5a1671794cee3fa0d4952c0d00fa0890a903d2de3f3fe5f703"},
+    {"path": "20231101.zh/train-00002-of-00006.parquet", "size": 126796358, "sha256": "ec8f6c0dd1418b8fcd454278fb4f2bc7cd0ce8312f29c80b672533942601338f"},
+    {"path": "20231101.zh/train-00003-of-00006.parquet", "size": 262039932, "sha256": "4884e4933fa91f46dc9bf711db8be07f368da59b8cfc2e00e895a65a3284cbb1"},
+    {"path": "20231101.zh/train-00004-of-00006.parquet", "size": 256719920, "sha256": "415a5cd235a359a009c6bd6d488c3d9ee81ed3220b9f33fd04214558bc5150cd"},
+    {"path": "20231101.zh/train-00005-of-00006.parquet", "size": 224856014, "sha256": "803ae27118b1daf9be4403b57b679b8ce065fbffdfdea0c33c517255c17478df"}
+  ]
+}

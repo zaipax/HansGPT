@@ -7,7 +7,7 @@
 [`EXPERIMENT_REPORT_QWEN35_2B.md`](EXPERIMENT_REPORT_QWEN35_2B.md)，完整问题归因见
 [`GLYPH_BOTTLENECK_DIAGNOSTIC_REPORT.md`](GLYPH_BOTTLENECK_DIAGNOSTIC_REPORT.md)。
 
-从零训练纯中文字符语言模型的架构、词表与语料采集清洗方案见
+以每个 32×32 字形格子为输入、通过共享视觉编码器产生 embedding 的 HansGPT 架构与语料方案见
 [`HANSGPT_MODEL_AND_DATA_DESIGN.md`](HANSGPT_MODEL_AND_DATA_DESIGN.md)。该文档是下一阶段设计提案。
 
 ## 功能

@@ -26,6 +26,38 @@ def memory_statistics(device: torch.device) -> dict:
     }
 
 
+def sample_capacity_asset_addresses(
+    content_ids: torch.Tensor,
+    controls: dict[str, int],
+    batch_size: int,
+    sequence_length: int,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    """Sample [BOS, content..., EOS]; PAD is never a supervised or context tile."""
+    if batch_size < 1 or sequence_length < 1 or content_ids.ndim != 1 or not len(content_ids):
+        raise ValueError("Need positive dimensions and a nonempty content asset list")
+    if not {"PAD", "BOS", "EOS"}.issubset(controls):
+        raise ValueError("Capacity sampling requires PAD, BOS and EOS definitions")
+    control_ids = torch.tensor(list(controls.values()), device=content_ids.device)
+    if len(set(controls.values())) != len(controls) or bool(
+        torch.isin(content_ids, control_ids).any()
+    ):
+        raise ValueError("Content addresses must exclude every distinct control asset")
+    addresses = torch.empty(
+        (batch_size, sequence_length + 1), dtype=torch.long, device=content_ids.device
+    )
+    addresses[:, 0] = controls["BOS"]
+    addresses[:, -1] = controls["EOS"]
+    selected = torch.randint(
+        len(content_ids),
+        (batch_size, sequence_length - 1),
+        device=content_ids.device,
+        generator=generator,
+    )
+    addresses[:, 1:-1] = content_ids[selected]
+    return addresses
+
+
 def stress(args: argparse.Namespace) -> None:
     if os.environ.get("CUDA_VISIBLE_DEVICES") != "0":
         raise RuntimeError("Capacity stress is authorized on GPU0: set CUDA_VISIBLE_DEVICES=0")
@@ -33,6 +65,8 @@ def stress(args: argparse.Namespace) -> None:
         raise RuntimeError("GPU0 capacity stress requires CUDA")
     if min(args.batch_size, args.sequence_length, args.steps) <= 0:
         raise ValueError("Batch size, sequence length and steps must be positive")
+    if not args.steps <= args.max_attempts <= 20:
+        raise ValueError("Requested steps must fit within at most 20 total attempts")
     output = Path(args.output).resolve()
     if output.suffix != ".json" or not output.is_relative_to(Path("artifacts/logs").resolve()):
         raise ValueError("Output must be a JSON file under artifacts/logs/")
@@ -67,14 +101,17 @@ def stress(args: argparse.Namespace) -> None:
         "status": "running",
         "mode": "synthetic_capacity_stress",
         "counts_as_training_result": False,
-        "sampling": "Uniform verified glyph-bank asset addresses, resolved to pixels before CNN",
-        "supervision": "Independent random T+1 tiles shifted once; all B*T targets valid",
+        "sampling": "BOS first, uniform verified content assets inside, EOS last; no valid PAD",
+        "supervision": "BOS/content/EOS T+1 tiles, shifted once; all B*T targets valid",
         "scope": "GPU memory and finite-gradient capacity only; no language-quality conclusion",
         "metadata": metadata,
         "requested_steps": args.steps,
+        "maximum_attempts": args.max_attempts,
+        "attempted_steps": 0,
         "successful_optimizer_steps": 0,
         "overflow_steps": 0,
         "step_metrics": [],
+        "amp_calibration": "Bounded GradScaler skips are recorded and never count as updates",
     }
     write_json(output, report)
     started = time.monotonic()
@@ -93,6 +130,16 @@ def stress(args: argparse.Namespace) -> None:
             raise ValueError("Verified glyph bank must contain 32x32 binary assets")
         bank = torch.from_numpy(np.array(bitmaps, dtype=np.uint8, copy=True)).to(device)
         report["glyph_assets"] = len(bank)
+        inventory = json.loads((data_dir / "glyph_inventory.json").read_text(encoding="utf-8"))
+        controls = {name: int(index) for index, name in inventory["controls"].items()}
+        allowed = sorted(set(inventory["characters"].values()) - set(controls.values()))
+        content_ids = torch.tensor(allowed, dtype=torch.long, device=device)
+        report["sampling_exclusions"] = {
+            "interior_control_asset_ids": sorted(controls.values()),
+            "interior_content_assets": len(content_ids),
+            "valid_pad_positions": 0,
+            "boundary_controls": {name: controls[name] for name in ("BOS", "EOS")},
+        }
         model = GlyphGPT(model_config).to(device).train()
         model.gradient_checkpointing_enable()
         report["parameters"] = sum(parameter.numel() for parameter in model.parameters())
@@ -114,19 +161,21 @@ def stress(args: argparse.Namespace) -> None:
         mask = torch.ones((args.batch_size, args.sequence_length), device=device, dtype=torch.bool)
         cnn_weight = model.glyph_encoder.convolutions[0].weight
         cnn_before = cnn_weight.detach().clone()
-        for step in range(args.steps):
+        for attempt in range(args.max_attempts):
+            report["attempted_steps"] = attempt + 1
             optimizer.zero_grad(set_to_none=True)
             torch.cuda.synchronize(device)
             step_started = time.monotonic()
-            asset_addresses = torch.randint(
-                len(bank),
-                (args.batch_size, args.sequence_length + 1),
-                device=device,
-                generator=generator,
+            asset_addresses = sample_capacity_asset_addresses(
+                content_ids, controls, args.batch_size, args.sequence_length, generator
             )
+            if bool((asset_addresses == controls["PAD"]).any()):
+                raise RuntimeError("Capacity sampling incorrectly exposed PAD as valid context")
             tiles = bank[asset_addresses]
             with torch.autocast("cuda", dtype=torch.float16):
                 logits = model(tiles[:, :-1], attention_mask=mask)
+                if not bool(torch.isfinite(logits).all()):
+                    raise FloatingPointError("Synthetic capacity stress produced nonfinite logits")
                 loss = pixel_bce_loss(logits, tiles[:, 1:], mask)
             if not bool(torch.isfinite(loss)):
                 raise FloatingPointError("Synthetic capacity stress produced nonfinite loss")
@@ -151,26 +200,34 @@ def stress(args: argparse.Namespace) -> None:
             report["successful_optimizer_steps"] += int(not overflow)
             report["step_metrics"].append(
                 {
-                    "step": step + 1,
+                    "attempt": attempt + 1,
+                    "successful_optimizer_steps": report["successful_optimizer_steps"],
                     "seconds": elapsed,
                     "synthetic_valid_tiles": mask.numel(),
                     "valid_position_fraction": 1.0,
                     "bce_per_pixel": float(loss.detach()),
-                    "grad_norm": float(grad_norm),
+                    "grad_norm": float(grad_norm) if bool(torch.isfinite(grad_norm)) else None,
+                    "finite_grad_norm": bool(torch.isfinite(grad_norm)),
                     "finite_cnn_gradients": finite_cnn_gradients,
                     "nonzero_cnn_gradient": nonzero_cnn_gradient,
                     "grad_scaler_scale": scaler.get_scale(),
+                    "grad_scaler_scale_before": old_scale,
                     "optimizer_step_skipped": overflow,
                     **memory_statistics(device),
                 }
             )
             write_json(output, report)
+            if overflow:
+                # Calibration attempts remain visible and never count as updates.
+                continue
             if (
                 not finite_cnn_gradients
                 or not nonzero_cnn_gradient
                 or not torch.isfinite(grad_norm)
             ):
                 raise FloatingPointError("Synthetic capacity stress failed its CNN gradient check")
+            if report["successful_optimizer_steps"] == args.steps:
+                break
         if report["successful_optimizer_steps"] != args.steps:
             raise FloatingPointError("Capacity test did not finish every requested optimizer step")
         report["cnn_weight_max_absolute_change"] = float(
@@ -220,6 +277,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, required=True)
     parser.add_argument("--sequence-length", type=int, default=1024)
     parser.add_argument("--steps", type=int, default=2)
+    parser.add_argument("--max-attempts", type=int, default=20)
     parser.add_argument("--output", required=True)
     stress(parser.parse_args())
 

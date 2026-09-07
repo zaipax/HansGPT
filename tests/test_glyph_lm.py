@@ -1,8 +1,10 @@
 """Small CPU/GPU integration tests, executed in the server's project uv environment."""
 
+import importlib.util
 import json
 from contextlib import nullcontext
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -248,6 +250,79 @@ def test_generation_sliding_window_recompute_matches_uncached():
     cached = model.generate(prompt, max_new_tokens=4)
     direct = model.generate(prompt, max_new_tokens=4, use_cache=False)
     torch.testing.assert_close(cached, direct, atol=0, rtol=0)
+
+
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), -float("inf")])
+def test_generation_rejects_nonfinite_logits_before_binary_feedback(bad_value):
+    model = GlyphGPT(small_config()).train()
+    with torch.no_grad():
+        model.pixel_head.bias[0] = bad_value
+    encoder_calls = []
+    hook = model.glyph_encoder.register_forward_pre_hook(
+        lambda _module, _args: encoder_calls.append("CNN")
+    )
+    with pytest.raises(FloatingPointError, match="nonfinite logits"):
+        model.generate(binary_input(2), max_new_tokens=3)
+    hook.remove()
+    assert len(encoder_calls) == 1
+    assert model.training  # Failure restores the mode as well as stopping feedback.
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_masked_zero_pad_preserves_finite_cnn_gradients(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA integration case requires the authorized training server GPU")
+    torch.manual_seed(41)
+    model = GlyphGPT(small_config()).to(device).train()
+    model.gradient_checkpointing_enable()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda")
+    glyphs = torch.randint(0, 2, (2, 8, 1, 32, 32), dtype=torch.uint8, device=device)
+    targets = torch.randint(0, 2, glyphs.shape, dtype=torch.uint8, device=device)
+    mask = torch.arange(8, device=device)[None, :] < torch.tensor([[3], [5]], device=device)
+    glyphs[~mask] = 0
+    targets[~mask] = 0
+    context = torch.autocast("cuda", dtype=torch.float16) if device == "cuda" else nullcontext()
+    with context:
+        logits = model(glyphs, attention_mask=mask)
+        loss = pixel_bce_loss(logits, targets, mask)
+    assert torch.isfinite(logits).all() and torch.isfinite(loss)
+    scaler.scale(loss).backward()
+    scaler.unscale_(optimizer)
+    for parameter in model.parameters():
+        assert parameter.grad is not None and torch.isfinite(parameter.grad).all()
+    assert model.glyph_encoder.convolutions[0].weight.grad.abs().sum() > 0
+    scale_before = scaler.get_scale()
+    scaler.step(optimizer)
+    scaler.update()
+    assert scaler.get_scale() >= scale_before
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_capacity_sampler_has_structural_boundaries_and_never_samples_pad(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA integration case requires the authorized training server GPU")
+    specification = importlib.util.spec_from_file_location(
+        "stress_glyph_lm_for_test", Path(__file__).parents[1] / "scripts" / "stress_glyph_lm.py"
+    )
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    controls = {"PAD": 8, "BOS": 3, "EOS": 9, "NEWLINE": 1}
+    content = torch.tensor([0, 2, 4, 5, 6, 7], device=device)
+    generator = torch.Generator(device=device).manual_seed(43)
+    for length in (1, 2, 64):
+        addresses = module.sample_capacity_asset_addresses(content, controls, 3, length, generator)
+        assert addresses.shape == (3, length + 1)
+        assert (addresses[:, 0] == controls["BOS"]).all()
+        assert (addresses[:, -1] == controls["EOS"]).all()
+        assert torch.isin(addresses[:, 1:-1], content).all()
+        assert not (addresses == controls["PAD"]).any()
+        assert not (addresses == controls["NEWLINE"]).any()
+        assert not (addresses[:, :-1] == controls["EOS"]).any()
+        assert not (addresses[:, 1:] == controls["BOS"]).any()
+    invalid_content = torch.tensor([0, controls["PAD"]], device=device)
+    with pytest.raises(ValueError, match="exclude every distinct control"):
+        module.sample_capacity_asset_addresses(invalid_content, controls, 3, 64, generator)
 
 
 def test_model_config_and_checkpoint_roundtrip(tmp_path):

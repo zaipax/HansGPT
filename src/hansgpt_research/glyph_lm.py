@@ -271,6 +271,8 @@ class GlyphGPT(nn.Module):
                     use_cache=use_cache,
                     return_cache=True,
                 )
+                if not bool(torch.isfinite(logits).all()):
+                    raise FloatingPointError("Cannot generate a binary tile from nonfinite logits")
                 tile = (logits[:, -1:].float().sigmoid() >= threshold).to(torch.uint8)
                 tile[finished] = 0
                 generated.append(tile)

@@ -7,7 +7,7 @@
 [`EXPERIMENT_REPORT_QWEN35_2B.md`](EXPERIMENT_REPORT_QWEN35_2B.md)，完整问题归因见
 [`GLYPH_BOTTLENECK_DIAGNOSTIC_REPORT.md`](GLYPH_BOTTLENECK_DIAGNOSTIC_REPORT.md)。
 
-以每个 32×32 字形格子为输入、通过共享视觉编码器产生 embedding 的 HansGPT 架构与语料方案见
+以 32×32 二值字形为输入、经共享视觉编码器与因果模型预测下一格 1024 个二值像素的方案见
 [`HANSGPT_MODEL_AND_DATA_DESIGN.md`](HANSGPT_MODEL_AND_DATA_DESIGN.md)。该文档是下一阶段设计提案。
 
 ## 功能

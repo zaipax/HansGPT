@@ -19,6 +19,7 @@ from hansgpt_research.prepare_corpus import (
     ALLOWED,
     CONTROL_NAMES,
     SPLITS,
+    artifact_reason,
     canonical_han,
     control_tiles,
     digest_file,
@@ -259,6 +260,7 @@ def verify(directory: Path, per_split: int = 32) -> dict:
                 record["split"] != split
                 or not ALLOWED.fullmatch(text)
                 or unicodedata.normalize("NFC", text) != text
+                or artifact_reason(text) is not None
             ):
                 raise ValueError("Noncanonical corpus text or incorrect split label")
             actual_hash = hashlib.sha256(text.encode()).hexdigest()
@@ -324,6 +326,9 @@ def verify(directory: Path, per_split: int = 32) -> dict:
         "rejected_exact_duplicate",
         "rejected_punctuation_variant",
         "rejected_near_duplicate",
+        "rejected_empty_parentheses",
+        "rejected_empty_labeled_parentheses",
+        "rejected_missing_numeric_slot",
     )
     if filter_stats["candidate_paragraphs"] != filter_stats["retained_paragraphs"] + sum(
         filter_stats.get(key, 0) for key in rejection_keys
@@ -347,6 +352,7 @@ def verify(directory: Path, per_split: int = 32) -> dict:
             "sha256",
             "source_scan_coverage",
             "strict_chinese",
+            "known_extraction_artifacts",
             "binary_pixels",
             "full_glyph_rerender",
             "canonical_inventory",

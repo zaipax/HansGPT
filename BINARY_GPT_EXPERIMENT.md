@@ -24,12 +24,12 @@ uv run ruff check .
 uv run pytest -q
 
 uv run python -m hansgpt_research.prepare_corpus \
-  --shards 2 --max-pages 10000 --max-han 500000 \
-  --output data/processed/modelscope_zhwiki_smoke_v2
-uv run python scripts/verify_corpus.py data/processed/modelscope_zhwiki_smoke_v2
+  --shards 2 --max-pages 20000 --max-han 500000 \
+  --output data/processed/modelscope_zhwiki_smoke_v3
+uv run python scripts/verify_corpus.py data/processed/modelscope_zhwiki_smoke_v3
 
 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0 uv run python -m hansgpt_research.train_glyph_lm \
-  --data data/processed/modelscope_zhwiki_smoke_v2 \
+  --data data/processed/modelscope_zhwiki_smoke_v3 \
   --run-name hansgpt_binary_v1_smoke --mode smoke --smoke-tokens 32768
 
 uv run python -m hansgpt_research.prepare_corpus \

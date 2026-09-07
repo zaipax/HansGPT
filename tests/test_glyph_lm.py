@@ -1,6 +1,7 @@
 """Small CPU/GPU integration tests, executed in the server's project uv environment."""
 
 import json
+from contextlib import nullcontext
 from dataclasses import replace
 
 import numpy as np
@@ -40,6 +41,10 @@ def test_default_architecture_has_exact_agreed_parameter_count():
     model = GlyphGPT(ModelConfig())
     assert sum(parameter.numel() for parameter in model.parameters()) == 78_118_368
     assert model.backbone.embed_tokens is None
+    assert model.backbone.main_input_name == "inputs_embeds"
+    assert model.backbone.config.bos_token_id is None
+    assert model.backbone.config.eos_token_id is None
+    assert model.backbone.config.pad_token_id is None
     assert model.pixel_head.out_features == 1024
     assert model.pixel_head.bias is not None
 
@@ -83,6 +88,52 @@ def test_repeated_pixel_encoding_preserves_logits_and_cnn_gradients():
         assert name_a == name_b
         assert weight_a.grad is not None and weight_a.grad.abs().sum() > 0
         torch.testing.assert_close(weight_a.grad, weight_b.grad, atol=2e-7, rtol=2e-4)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_checkpoint_replays_decoder_preserves_cnn_gradients_and_updates_weights(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA integration case requires the authorized training server GPU")
+    torch.manual_seed(31)
+    direct = GlyphGPT(small_config()).to(device).train()
+    checkpointed = GlyphGPT(small_config()).to(device).train()
+    checkpointed.load_state_dict(direct.state_dict())
+    checkpointed.gradient_checkpointing_enable()
+    assert all(layer.gradient_checkpointing for layer in checkpointed.backbone.layers)
+    calls = []
+    hook = checkpointed.backbone.layers[0].register_forward_pre_hook(
+        lambda _module, _args: calls.append("decoder execution")
+    )
+    # Images have no gradient: the CNN's trainable weights must create and retain
+    # the graph that checkpoint replay follows back through inputs_embeds.
+    glyphs = binary_input(3)[:, [0, 1, 0, 2, 1]].to(device)
+    targets = binary_input(5).to(device)
+    mask = torch.ones((1, 5), dtype=torch.bool, device=device)
+    optimizer = torch.optim.SGD(checkpointed.parameters(), lr=0.1)
+    before = checkpointed.glyph_encoder.convolutions[0].weight.detach().clone()
+    context = torch.autocast("cuda", dtype=torch.float16) if device == "cuda" else nullcontext()
+    with context:
+        direct_logits = direct(glyphs)
+        checkpointed_logits = checkpointed(glyphs)
+        direct_loss = pixel_bce_loss(direct_logits, targets, mask)
+        checkpointed_loss = pixel_bce_loss(checkpointed_logits, targets, mask)
+    torch.testing.assert_close(direct_logits, checkpointed_logits, atol=2e-6, rtol=2e-5)
+    assert len(calls) == 1
+    direct_loss.backward()
+    checkpointed_loss.backward()
+    hook.remove()
+    assert len(calls) >= 2  # Recompute really ran; a disabled checkpoint would fail.
+    for (direct_name, direct_weight), (checkpointed_name, checkpointed_weight) in zip(
+        direct.glyph_encoder.named_parameters(),
+        checkpointed.glyph_encoder.named_parameters(),
+        strict=True,
+    ):
+        assert direct_name == checkpointed_name
+        gradient = checkpointed_weight.grad
+        assert gradient is not None and torch.isfinite(gradient).all() and gradient.abs().sum() > 0
+        torch.testing.assert_close(gradient, direct_weight.grad, atol=2e-7, rtol=2e-4)
+    optimizer.step()
+    assert not torch.equal(before, checkpointed.glyph_encoder.convolutions[0].weight)
 
 
 @pytest.mark.parametrize("bad_value", [0.5, -1.0, 2.0, float("nan")])

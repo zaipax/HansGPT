@@ -13,6 +13,7 @@ from opencc import OpenCC
 
 from hansgpt_research.prepare_corpus import (
     CorpusStore,
+    artifact_reason,
     clean_paragraphs,
     control_tiles,
     download,
@@ -172,6 +173,49 @@ def test_rejected_foreign_text_bypasses_opencc_and_conversion_is_rechecked():
     assert stats["rejected_before_opencc"] == 2
     assert stats["opencc_paragraphs_processed"] == 2
     assert stats["rejected_non_chinese_or_unsupported_symbols"] == 3
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("博南格莱加来（）面积，位于法国，是当地的一座村镇。", "empty_parentheses"),
+        ("（）面积，位于法国，是当地的一座村镇。", "empty_parentheses"),
+        ("格拉沃利讷（，；）是法国的一座城市。", "empty_parentheses"),
+        ("长吻梅花鲈（学名：）为河鲈科的一种鱼类。", "empty_labeled_parentheses"),
+        ("这个城镇（法语：；）位于法国北部。", "empty_labeled_parentheses"),
+        ("这个城镇面积，位于法国北部。", "missing_numeric_slot"),
+        ("这个城镇总面积约为，位于法国北部。", "missing_numeric_slot"),
+        ("这个地区总人口为，主要从事农业。", "missing_numeric_slot"),
+    ],
+)
+def test_upstream_extraction_artifacts_drop_whole_paragraphs(text, reason):
+    stats = Counter()
+    assert artifact_reason(text) == reason
+    assert clean_paragraphs(
+        f"前面的正文段落。\n{text}\n后面的正文段落。",
+        OpenCC("t2s"),
+        stats,
+        min_han=2,
+        max_length=200,
+        wikitext=False,
+    ) == ["前面的正文段落。", "后面的正文段落。"]
+    assert stats[f"rejected_{reason}"] == 1
+    assert stats["candidate_paragraphs"] == 3
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "这座城市（位于法国北部）拥有悠久历史。",
+        "这个城镇面积为十平方公里，位于法国北部。",
+        "这里讨论土地面积，位于第二章的例题介绍计算方法。",
+        "长吻梅花鲈（别名：梅花鲈）为河鲈科的一种鱼类。",
+        "引号也是标点（标点：，）示例中的一部分。",
+        "这片土地的面积，人口数量和地理位置都已经记录。",
+    ],
+)
+def test_artifact_filters_preserve_complete_explanations_and_values(text):
+    assert artifact_reason(text) is None
 
 
 def test_source_scan_evidence_counts_last_yield_and_unvisited_shards(tmp_path):

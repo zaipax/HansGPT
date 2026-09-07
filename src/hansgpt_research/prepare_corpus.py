@@ -36,6 +36,24 @@ HAN = regex.compile(r"[\p{Unified_Ideograph}〇]")
 PUNCTUATION_MAP = str.maketrans(
     {",": "，", ".": "。", "!": "！", "?": "？", ";": "；", ":": "：", "(": "（", ")": "）"}
 )
+INNER_PUNCTUATION = regex.escape(PUNCTUATION.replace("（", "").replace("）", ""))
+EMPTY_VALUE_LABELS = "学名|原名|别名|法语|英语|拉丁语|德语|日语|西班牙语|意大利语|荷兰语|俄语"
+LOCATION_PREFIXES = "法国|中国|英国|德国|日本|美国|俄罗斯|西班牙|意大利|欧洲|亚洲|非洲|美洲|大洋洲"
+ARTIFACT_PATTERNS = (
+    ("empty_parentheses", regex.compile(rf"（[{INNER_PUNCTUATION}]*）")),
+    (
+        "empty_labeled_parentheses",
+        regex.compile(rf"（(?:{EMPTY_VALUE_LABELS})：[{INNER_PUNCTUATION}]*）"),
+    ),
+    (
+        "missing_numeric_slot",
+        regex.compile(
+            r"(?:总面积|面积)(?:约为|为|约|达)?[，；](?:位于|地处|坐落于|位在)"
+            rf"(?:{LOCATION_PREFIXES})"
+            r"|(?:总面积|面积|总人口|人口|海拔)(?:约为|为|达)[，；。]"
+        ),
+    ),
+)
 FONT_URL = (
     "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/"
     "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
@@ -143,6 +161,11 @@ def plain_wikitext(raw: str) -> str:
     return code.strip_code(normalize=True, collapse=False)
 
 
+def artifact_reason(text: str) -> str | None:
+    """Reject observed upstream extraction holes without inventing replacement text."""
+    return next((name for name, pattern in ARTIFACT_PATTERNS if pattern.search(text)), None)
+
+
 def clean_paragraphs(
     raw: str,
     converter: OpenCC,
@@ -167,6 +190,9 @@ def clean_paragraphs(
         stats["opencc_paragraphs_processed"] += 1
         if not ALLOWED.fullmatch(text):
             stats["rejected_non_chinese_or_unsupported_symbols"] += 1
+            continue
+        if reason := artifact_reason(text):
+            stats[f"rejected_{reason}"] += 1
             continue
         if len(HAN.findall(text)) < min_han:
             stats["rejected_short"] += 1
@@ -641,7 +667,7 @@ def prepare(args: argparse.Namespace) -> dict:
         "configuration": vars(args),
         "source": source,
         "source_scan": source_scan,
-        "cleaning_version": "strict_han_v2_prefilter_then_opencc",
+        "cleaning_version": "strict_han_v3_artifact_rejection",
         "filter_stats": dict(stats),
         "splits": split_stats,
         "glyphs": {
@@ -668,6 +694,7 @@ def prepare(args: argparse.Namespace) -> dict:
         "limitations": [
             "Snapshot and selected files are scanned in source order; Wikipedia is domain-biased.",
             "Mixed-script, numeric and unsupported-symbol paragraphs are rejected intact.",
+            "Known empty-value extraction artifacts are rejected; source omissions can remain.",
             "Chinese Wikipedia provenance and strict character checks; no statistical language ID.",
             "Near-duplicate recall is approximate; no external benchmark decontamination.",
             "Document splits share characters; no character-disjoint generalization claim.",

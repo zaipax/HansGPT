@@ -117,6 +117,9 @@ class GlyphGPT(nn.Module):
         self.glyph_encoder = GlyphEncoder(config)
         transformer_config = LlamaConfig(
             vocab_size=1,
+            bos_token_id=None,
+            eos_token_id=None,
+            pad_token_id=None,
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             num_hidden_layers=config.num_hidden_layers,
@@ -138,6 +141,10 @@ class GlyphGPT(nn.Module):
         # Passing inputs_embeds alone would leave an unused character embedding.
         # Remove the module itself so checkpoints and parameter counts are honest.
         self.backbone.embed_tokens = None
+        # Transformers checks this interface declaration before installing a
+        # token-embedding requires_grad hook for checkpointing. Our inputs already
+        # carry the trainable CNN's autograd graph, with no token embedding to hook.
+        self.backbone.main_input_name = "inputs_embeds"
         self.pixel_head = nn.Linear(config.hidden_size, 1024, bias=True)
         nn.init.normal_(self.pixel_head.weight, std=config.initializer_range)
         nn.init.zeros_(self.pixel_head.bias)

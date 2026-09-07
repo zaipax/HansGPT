@@ -34,6 +34,7 @@ class ModelConfig:
     attention_dropout: float = 0.0
     initializer_range: float = 0.02
     deduplicate_glyphs: bool = True
+    glyph_deduplication_strategy: str = "unpacked"
     glyph_encode_chunk_size: int = 256
 
     def __post_init__(self) -> None:
@@ -56,6 +57,8 @@ class ModelConfig:
             raise ValueError("RoPE requires an even head dimension")
         if not 0 <= self.attention_dropout < 1:
             raise ValueError("attention_dropout must be in [0, 1)")
+        if self.glyph_deduplication_strategy not in {"unpacked", "packed"}:
+            raise ValueError("glyph_deduplication_strategy must be unpacked or packed")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -73,6 +76,28 @@ def validate_binary_tiles(tiles: Tensor, *, name: str = "glyphs") -> None:
         raise ValueError(f"{name} must contain at least one tile")
     if not bool(((tiles == 0) | (tiles == 1)).all()):
         raise ValueError(f"{name} must contain only binary 0/1 pixels")
+
+
+def _unique_binary_pixels(flat_pixels: Tensor, strategy: str) -> tuple[Tensor, Tensor]:
+    """Deduplicate validated binary rows, optionally sorting lossless packed bytes.
+
+    Packing is only an equality/sorting optimization. The returned unique rows
+    are the original 1024 binary pixels, and only those pixels enter the CNN.
+    MSB-first order preserves the same lexicographic order as unpacked rows.
+    """
+    if strategy == "unpacked":
+        return torch.unique(flat_pixels, dim=0, return_inverse=True)
+    if strategy != "packed":
+        raise ValueError("Unknown pixel deduplication strategy")
+    bit_shifts = torch.tensor(
+        (7, 6, 5, 4, 3, 2, 1, 0), dtype=torch.uint8, device=flat_pixels.device
+    )
+    groups = flat_pixels.reshape(-1, 128, 8)
+    # Each group sums to at most 255; int16 safely holds the intermediate sum.
+    packed = (groups << bit_shifts).sum(dim=-1, dtype=torch.int16).to(torch.uint8)
+    unique_packed, inverse = torch.unique(packed, dim=0, return_inverse=True)
+    unique_pixels = ((unique_packed.unsqueeze(-1) >> bit_shifts) & 1).reshape(-1, 1024)
+    return unique_pixels, inverse
 
 
 class GlyphEncoder(nn.Module):
@@ -163,8 +188,9 @@ class GlyphGPT(nn.Module):
             # Uniqueness is decided from pixels, not corpus IDs. Gather backward
             # sums every occurrence's gradient into the shared CNN computation.
             # This cache lives for this forward only; it never survives an update.
-            unique_pixels, inverse = torch.unique(
-                flat_tiles.reshape(-1, 1024).to(torch.uint8), dim=0, return_inverse=True
+            unique_pixels, inverse = _unique_binary_pixels(
+                flat_tiles.reshape(-1, 1024).to(torch.uint8),
+                self.config.glyph_deduplication_strategy,
             )
             flat_tiles = unique_pixels.reshape(-1, 1, 32, 32)
         encoded = torch.cat(

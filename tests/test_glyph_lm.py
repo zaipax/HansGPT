@@ -13,6 +13,7 @@ from hansgpt_research.glyph_lm import (
     GlyphGPT,
     GlyphSequenceDataset,
     ModelConfig,
+    _unique_binary_pixels,
     collate_glyph_sequences,
     pixel_bce_loss,
 )
@@ -134,6 +135,58 @@ def test_checkpoint_replays_decoder_preserves_cnn_gradients_and_updates_weights(
         torch.testing.assert_close(gradient, direct_weight.grad, atol=2e-7, rtol=2e-4)
     optimizer.step()
     assert not torch.equal(before, checkpointed.glyph_encoder.convolutions[0].weight)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_packed_pixel_uniqueness_is_lossless_for_all_byte_values(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA integration case requires the authorized training server GPU")
+    values = torch.arange(256, device=device)
+    shifts = torch.arange(7, -1, -1, device=device)
+    # Every possible byte is tested in every byte position, including 0 and 255.
+    all_patterns = ((values[:, None] >> shifts) & 1).repeat(1, 128).to(torch.uint8)
+    pixels = torch.cat((all_patterns.flip(0), all_patterns[[0, 255, 127, 128, 255]]))
+    unpacked, unpacked_inverse = _unique_binary_pixels(pixels, "unpacked")
+    packed, packed_inverse = _unique_binary_pixels(pixels, "packed")
+    assert packed.dtype == torch.uint8 and packed.shape == (256, 1024)
+    assert ((packed == 0) | (packed == 1)).all()
+    torch.testing.assert_close(packed, unpacked, atol=0, rtol=0)
+    torch.testing.assert_close(packed_inverse, unpacked_inverse, atol=0, rtol=0)
+    torch.testing.assert_close(packed[packed_inverse], pixels, atol=0, rtol=0)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_packed_dedup_preserves_predictions_cnn_gradients_and_parameter_count(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA integration case requires the authorized training server GPU")
+    torch.manual_seed(37)
+    unpacked = GlyphGPT(small_config(glyph_deduplication_strategy="unpacked")).to(device)
+    packed = GlyphGPT(small_config(glyph_deduplication_strategy="packed")).to(device)
+    packed.load_state_dict(unpacked.state_dict())
+    assert sum(p.numel() for p in packed.parameters()) == sum(
+        p.numel() for p in unpacked.parameters()
+    )
+    assert packed.state_dict().keys() == unpacked.state_dict().keys()
+    glyphs = binary_input(3)[:, [0, 1, 0, 2, 1, 0, 0]].to(device)
+    targets = binary_input(7).to(device)
+    mask = torch.ones((1, 7), dtype=torch.bool, device=device)
+    context = torch.autocast("cuda", dtype=torch.float16) if device == "cuda" else nullcontext()
+    with context:
+        unpacked_logits = unpacked(glyphs)
+        packed_logits = packed(glyphs)
+        unpacked_loss = pixel_bce_loss(unpacked_logits, targets, mask)
+        packed_loss = pixel_bce_loss(packed_logits, targets, mask)
+    torch.testing.assert_close(packed_logits, unpacked_logits, atol=2e-6, rtol=2e-5)
+    unpacked_loss.backward()
+    packed_loss.backward()
+    for (unpacked_name, unpacked_weight), (packed_name, packed_weight) in zip(
+        unpacked.glyph_encoder.named_parameters(),
+        packed.glyph_encoder.named_parameters(),
+        strict=True,
+    ):
+        assert unpacked_name == packed_name
+        assert packed_weight.grad is not None and packed_weight.grad.abs().sum() > 0
+        torch.testing.assert_close(packed_weight.grad, unpacked_weight.grad, atol=2e-7, rtol=2e-4)
 
 
 @pytest.mark.parametrize("bad_value", [0.5, -1.0, 2.0, float("nan")])

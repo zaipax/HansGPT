@@ -10,6 +10,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 import numpy as np
+import regex
 import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw
@@ -32,6 +33,65 @@ from hansgpt_research.train_glyph_lm import (
 
 def safe_ratio(numerator: float, denominator: float) -> float:
     return numerator / denominator if denominator else 0.0
+
+
+def glyph_categories(inventory: dict) -> dict[str, list[int]]:
+    """Classify evaluation labels only; character IDs never enter the model."""
+    categories = {"han_only": [], "punctuation_only": []}
+    for character, identifier in inventory["characters"].items():
+        if regex.fullmatch(r"[\p{Unified_Ideograph}〇]", character):
+            category = "han_only"
+        elif regex.fullmatch(r"\p{P}", character):
+            category = "punctuation_only"
+        else:
+            raise ValueError("Content inventory label is neither one Han character nor punctuation")
+        categories[category].append(int(identifier))
+    return {name: sorted(identifiers) for name, identifiers in categories.items()}
+
+
+def category_bitmap_sets(glyph_bank: torch.Tensor, categories: dict) -> dict[str, set[bytes]]:
+    """Exact packed bitmap membership preserves collisions, including across categories."""
+    bitmaps = np.packbits(glyph_bank.detach().cpu().numpy().reshape(len(glyph_bank), 1024), axis=1)
+    return {
+        name: {bitmaps[index].tobytes() for index in identifiers}
+        for name, identifiers in categories.items()
+    }
+
+
+def exact_category_memberships(
+    predictions: torch.Tensor, bitmap_sets: dict
+) -> dict[str, np.ndarray]:
+    packed = np.packbits(predictions.detach().cpu().numpy().reshape(len(predictions), 1024), axis=1)
+    keys = [bitmap.tobytes() for bitmap in packed]
+    return {
+        name: np.array([key in members for key in keys], dtype=bool)
+        for name, members in bitmap_sets.items()
+    }
+
+
+def new_retrieval_counts() -> dict:
+    return {
+        "targets": 0,
+        "top1": 0,
+        "top5": 0,
+        "nearest_hamming_sum": 0.0,
+        "legal_content_bitmaps": 0,
+    }
+
+
+def summarize_retrieval(counts: dict, gallery_size: int) -> dict:
+    return {
+        **counts,
+        "top1_accuracy": safe_ratio(counts["top1"], counts["targets"]),
+        "top5_accuracy": safe_ratio(counts["top5"], counts["targets"]),
+        "mean_nearest_hamming_bits": safe_ratio(counts["nearest_hamming_sum"], counts["targets"]),
+        "legal_content_bitmap_rate": safe_ratio(counts["legal_content_bitmaps"], counts["targets"]),
+        "gallery_size": gallery_size,
+        "gallery_scope": "all rendered corpus content glyphs; all controls excluded",
+        "tie_break": (
+            "lowest glyph inventory ID; pixel collisions cannot identify a unique character"
+        ),
+    }
 
 
 class BinaryMetrics:
@@ -268,19 +328,23 @@ def evaluate_split(
     gallery = bank[gallery_ids]
     controls = torch.tensor(list(dataset.control_ids.values()), device=device)
     all_metrics, content_metrics = BinaryMetrics(), BinaryMetrics()
+    categories = glyph_categories(dataset.inventory)
+    category_id_tensors = {
+        name: torch.tensor(identifiers, dtype=torch.long, device=device)
+        for name, identifiers in categories.items()
+    }
+    category_metrics = {name: BinaryMetrics() for name in categories}
     baselines = {"all_background": BinaryMetrics(), "train_pixel_frequency": BinaryMetrics()}
     baseline_content = {name: BinaryMetrics() for name in baselines}
+    baseline_categories = {
+        baseline: {name: BinaryMetrics() for name in categories} for baseline in baselines
+    }
     bins = {
         name: BinaryMetrics()
         for name in ("unseen", "rare_1_99", "medium_100_9999", "head_10000_plus")
     }
-    retrieval = {
-        "targets": 0,
-        "top1": 0,
-        "top5": 0,
-        "nearest_hamming_sum": 0.0,
-        "legal_content_bitmaps": 0,
-    }
+    retrieval = new_retrieval_counts()
+    category_retrieval = {name: new_retrieval_counts() for name in categories}
     retrieval_bins = {name: {"targets": 0, "top1": 0, "top5": 0} for name in bins}
     train_counts = torch.tensor(counts, device=device)
     for index, cpu_batch in enumerate(make_loader(dataset, config, device)):
@@ -296,8 +360,14 @@ def evaluate_split(
         tile_bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none").sum(-1)
         binary = logits.sigmoid() >= threshold
         content = ~torch.isin(target_ids, controls)
+        category_masks = {
+            name: torch.isin(target_ids, identifiers)
+            for name, identifiers in category_id_tensors.items()
+        }
         all_metrics.add(binary, targets, tile_bce)
         content_metrics.add(binary[content], targets[content], tile_bce[content])
+        for name, selected in category_masks.items():
+            category_metrics[name].add(binary[selected], targets[selected], tile_bce[selected])
         for name, probability in (
             ("all_background", torch.full_like(pixel_frequency, 1e-6)),
             ("train_pixel_frequency", pixel_frequency),
@@ -317,6 +387,10 @@ def evaluate_split(
             baseline_content[name].add(
                 binary_baseline[content], targets[content], baseline_bce[content]
             )
+            for category, selected in category_masks.items():
+                baseline_categories[name][category].add(
+                    binary_baseline[selected], targets[selected], baseline_bce[selected]
+                )
         predicted_ids, distances = nearest_glyphs(
             binary[content],
             gallery,
@@ -332,6 +406,15 @@ def evaluate_split(
         retrieval["top5"] += int(top5.sum())
         retrieval["nearest_hamming_sum"] += float(distances[:, 0].sum())
         retrieval["legal_content_bitmaps"] += int((distances[:, 0] == 0).sum())
+        for name, mask in category_masks.items():
+            selected = mask[content]
+            category_retrieval[name]["targets"] += int(selected.sum())
+            category_retrieval[name]["top1"] += int(top1[selected].sum())
+            category_retrieval[name]["top5"] += int(top5[selected].sum())
+            category_retrieval[name]["nearest_hamming_sum"] += float(distances[selected, 0].sum())
+            category_retrieval[name]["legal_content_bitmaps"] += int(
+                (distances[selected, 0] == 0).sum()
+            )
         frequencies = train_counts[target_ids]
         bin_masks = {
             "unseen": frequencies == 0,
@@ -357,27 +440,41 @@ def evaluate_split(
         raise ValueError("Empty test split")
     if all_metrics.tiles != dataset.target_count:
         raise ValueError("Test did not cover every valid next-grid target exactly once")
-    retrieval.update(
-        top1_accuracy=safe_ratio(retrieval["top1"], retrieval["targets"]),
-        top5_accuracy=safe_ratio(retrieval["top5"], retrieval["targets"]),
-        mean_nearest_hamming_bits=safe_ratio(
-            retrieval["nearest_hamming_sum"], retrieval["targets"]
-        ),
-        legal_content_bitmap_rate=safe_ratio(
-            retrieval["legal_content_bitmaps"], retrieval["targets"]
-        ),
-        gallery_size=len(gallery_ids),
-        gallery_scope="all rendered corpus content glyphs; all controls excluded",
-        tie_break="lowest glyph inventory ID; pixel collisions cannot identify a unique character",
-    )
+    if sum(metrics.tiles for metrics in category_metrics.values()) != content_metrics.tiles:
+        raise ValueError("Han and punctuation target slices do not partition all content targets")
     return {
         "scope": "entire test split; teacher-forced next-grid prediction",
         "threshold": threshold,
         "all_targets": all_metrics.result(),
         "content_only": content_metrics.result(),
-        "retrieval": retrieval,
+        "retrieval": summarize_retrieval(retrieval, len(gallery_ids)),
+        **{
+            name: {
+                **metrics.result(),
+                "retrieval": summarize_retrieval(category_retrieval[name], len(gallery_ids)),
+            }
+            for name, metrics in category_metrics.items()
+        },
+        "category_definition": {
+            "han_only": "inventory label matches exactly one Unified_Ideograph or 〇",
+            "punctuation_only": "inventory label matches exactly one Unicode Punctuation",
+            "classification_scope": "reference target labels only; model and gallery unchanged",
+            "inventory_counts": {
+                name: len(identifiers) for name, identifiers in categories.items()
+            },
+            "collision_note": (
+                "Categories partition reference labels, not necessarily bitmap identities."
+            ),
+        },
         "baselines": {
-            name: {**value.result(), "content_only": baseline_content[name].result()}
+            name: {
+                **value.result(),
+                "content_only": baseline_content[name].result(),
+                **{
+                    category: metrics.result()
+                    for category, metrics in baseline_categories[name].items()
+                },
+            }
             for name, value in baselines.items()
         },
         "baseline_threshold_selection": {
@@ -430,6 +527,7 @@ def generate_examples(
     gallery_ids = torch.tensor(dataset.gallery_ids, device=device)
     bank = dataset.glyph_bank.to(device).float()
     gallery = bank[gallery_ids]
+    bitmap_sets = category_bitmap_sets(dataset.glyph_bank, glyph_categories(dataset.inventory))
     labels = {
         int(identifier): character
         for character, identifier in dataset.inventory["characters"].items()
@@ -448,11 +546,16 @@ def generate_examples(
         if generated.shape[1] != length or not ((generated == 0) | (generated == 1)).all():
             raise ValueError("Generation did not produce the required strict binary sequence")
         predicted_ids, distances = nearest_glyphs(generated[0], gallery, gallery_ids)
+        memberships = exact_category_memberships(generated[0], bitmap_sets)
         example = {
             "test_sequence_index": index,
             "prompt_tiles": prompt_length,
             "feedback": "raw thresholded 0/1 predictions; no nearest-glyph projection",
             "decoding": "deterministic threshold; no character vocabulary sampling",
+            "category_legality_note": (
+                "Independent exact bitmap membership; Han/punctuation rates may overlap if "
+                "their font bitmaps collide. Membership does not identify a unique character."
+            ),
             "horizons": {},
         }
         for horizon in settings["generation_lengths"]:
@@ -466,6 +569,10 @@ def generate_examples(
             example["horizons"][str(horizon)] = {
                 "tiles": horizon,
                 "legal_content_bitmap_rate": float((distances[:horizon, 0] == 0).float().mean()),
+                "exact_han_bitmap_rate": float(memberships["han_only"][:horizon].mean()),
+                "exact_punctuation_bitmap_rate": float(
+                    memberships["punctuation_only"][:horizon].mean()
+                ),
                 "mean_nearest_hamming_bits": float(distances[:horizon, 0].mean()),
                 "foreground_rate": float(sequence.float().mean()),
                 "adjacent_exact_repeat_rate": float((flat[1:] == flat[:-1]).all(-1).float().mean())
@@ -616,6 +723,44 @@ def markdown_report(result: dict, path: Path) -> None:
             "字符 ID 仅用于评估标签，模型不接收该 ID。同像素字形碰撞采用最小 ID 打破平局，"
             "不能凭像素区分这些字符。",
             "",
+            "## 汉字与标点分别计分",
+            "",
+            "汉字定义为 Unicode Unified_Ideograph 加〇；标点定义为 Unicode Punctuation。"
+            "只按真实目标标签划分，检索仍使用同一个完整内容字形库；"
+            "把汉字预测成标点会保留为错误，不会通过缩小候选库被隐藏。",
+            "",
+            "| 指标 | 汉字目标 | 标点目标 |",
+            "|---|---:|---:|",
+        ]
+    )
+    for label, key in (
+        ("目标格数", "tiles"),
+        ("BCE / pixel", "bce_per_pixel"),
+        ("NLL nats / grid", "nll_nats_per_grid"),
+        ("前景 F1", "foreground_f1"),
+        ("IoU", "iou"),
+        ("Dice", "dice"),
+        ("整格完全匹配率", "exact_bitmap_match"),
+        ("Hamming bits / grid", "hamming_bits_per_grid"),
+        ("像素准确率（次要）", "pixel_accuracy"),
+    ):
+        lines.append(
+            f"| {label} | {test['han_only'][key]:.6f} | {test['punctuation_only'][key]:.6f} |"
+        )
+    for label, key in (
+        ("检索目标数", "targets"),
+        ("检索 Top1", "top1_accuracy"),
+        ("检索 Top5", "top5_accuracy"),
+    ):
+        lines.append(
+            f"| {label} | {test['han_only']['retrieval'][key]:.6f} | "
+            f"{test['punctuation_only']['retrieval'][key]:.6f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "同一位图对应多个标签时，检索仍按最小 ID 打破平局；标签分类不消除字体碰撞。",
+            "",
             "## 基线（相同测试参考目标，全部有效目标含控制格）",
             "",
             "| 基线 | BCE / pixel | 前景 F1 | IoU | 整格匹配 |",
@@ -634,7 +779,7 @@ def markdown_report(result: dict, path: Path) -> None:
             "训练像素频率基线仅统计训练 next-target，不使用测试集拟合。",
             f"像素频率基线独立选择阈值 {baseline_threshold}，选择范围为完整验证集的内容目标，"
             "优化内容像素 micro F1；模型阈值独立选择。两者均未使用测试集调参。"
-            "基线内容目标指标另存于 metrics.json 的 baselines.*.content_only。",
+            "基线内容、纯汉字和标点指标分别另存于 metrics.json 的 baselines.* 下。",
             "",
             "## 自由生成：原始二值图反馈",
             "",
@@ -642,14 +787,17 @@ def markdown_report(result: dict, path: Path) -> None:
             "不投影到合法字形库；最近字形转写只用于诊断，"
             "不能当作模型实际生成的字符或语义正确率。",
             "",
-            "| 样本 | 格数 | 合法内容字形率 | 到最近字形平均 Hamming | 相邻重复率 | 不同位图数 |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| 样本 | 格数 | 合法内容字形率 | 精确汉字位图率 | 精确标点位图率 | "
+            "最近 Hamming | 相邻重复率 | 不同位图数 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for index, example in enumerate(result["generation"]):
         for horizon, metrics in example["horizons"].items():
             lines.append(
                 f"| {index} | {horizon} | {metrics['legal_content_bitmap_rate']:.6f} | "
+                f"{metrics['exact_han_bitmap_rate']:.6f} | "
+                f"{metrics['exact_punctuation_bitmap_rate']:.6f} | "
                 f"{metrics['mean_nearest_hamming_bits']:.3f} | "
                 f"{metrics['adjacent_exact_repeat_rate']:.6f} | {metrics['unique_bitmaps']} |"
             )
@@ -666,6 +814,8 @@ def markdown_report(result: dict, path: Path) -> None:
             "独立像素阈值解码可能出现混合轮廓和重复塌缩。",
             "- 字形合法性只表示落入固定字体的位图集合，不能证明语法、事实或对话能力。"
             "尚未进行指令微调、跨字体或未见字评测。",
+            "- 自由生成的汉字／标点率分别做精确位图集合匹配；若两类字形发生像素碰撞，"
+            "同一生成格可计入两类，因此两率不保证相加等于合法内容率，且不能证明字符身份。",
             "- metrics.json 保存完整配置、源数据与字体 manifest、数据数组校验和、软件版本、"
             "提交、检查点 SHA-256、频次分层和生成诊断；generation_*.npz 保存严格 0/1 原图。",
             "",

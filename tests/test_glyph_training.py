@@ -10,8 +10,12 @@ import torch
 
 from hansgpt_research.evaluate_glyph_lm import (
     BinaryMetrics,
+    category_bitmap_sets,
+    exact_category_memberships,
+    glyph_categories,
     nearest_glyphs,
     select_constant_threshold,
+    summarize_retrieval,
 )
 from hansgpt_research.train_glyph_lm import (
     EpochSampler,
@@ -274,3 +278,38 @@ def test_sortish_reduces_padding_and_preserves_document_chunk_lengths():
 
     assert padded_positions(sortish_order) == int(lengths.sum())
     assert padded_positions(sortish_order) < padded_positions(random_order)
+
+
+def test_han_punctuation_classification_includes_zero_and_extension_ideographs():
+    inventory = {"characters": {"一": 4, "〇": 5, "𠀀": 6, "，": 7, "—": 8, "·": 9}}
+    assert glyph_categories(inventory) == {"han_only": [4, 5, 6], "punctuation_only": [7, 8, 9]}
+    with pytest.raises(ValueError, match="neither"):
+        glyph_categories({"characters": {"A": 4}})
+
+
+def test_generation_category_membership_is_exact_and_preserves_cross_category_collisions():
+    inventory = {"characters": {"一": 4, "〇": 5, "，": 6, "。": 7}}
+    bank = torch.zeros(8, 1, 32, 32, dtype=torch.uint8)
+    bank[4, 0, 0, 0] = bank[6, 0, 0, 0] = 1
+    bank[5, 0, 0, 1] = bank[7, 0, 0, 2] = 1
+    bitmap_sets = category_bitmap_sets(bank, glyph_categories(inventory))
+    predictions = bank[[4, 7, 0]]
+    actual = exact_category_memberships(predictions, bitmap_sets)
+    assert actual["han_only"].tolist() == [True, False, False]
+    assert actual["punctuation_only"].tolist() == [True, True, False]
+
+
+def test_han_retrieval_keeps_punctuation_candidates_and_distinguishes_legality():
+    gallery = torch.zeros(2, 1024)
+    gallery[0, 0] = 1  # Han target has one foreground bit.
+    predictions = torch.zeros(1, 1024)  # A punctuation bitmap is generated instead.
+    identifiers, distances = nearest_glyphs(predictions, gallery, torch.tensor([4, 5]))
+    assert identifiers[0, 0] == 5
+    assert distances[0, 0] == 0
+    result = summarize_retrieval(
+        {"targets": 1, "top1": 0, "top5": 1, "nearest_hamming_sum": 0, "legal_content_bitmaps": 1},
+        2,
+    )
+    assert result["top1_accuracy"] == 0
+    assert result["legal_content_bitmap_rate"] == 1
+    assert result["gallery_size"] == 2

@@ -12,7 +12,6 @@ import time
 import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
-import zipfile
 from collections import Counter
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -33,7 +32,10 @@ HAN = regex.compile(r"[\p{Unified_Ideograph}〇]")
 PUNCTUATION_MAP = str.maketrans(
     {",": "，", ".": "。", "!": "！", "?": "？", ";": "；", ":": "：", "(": "（", ")": "）"}
 )
-FONT_URL = "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/08_NotoSansCJKsc.zip"
+FONT_URL = (
+    "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/"
+    "Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
+)
 SPLITS = ("train", "validation", "test")
 CONTROL_NAMES = ("PAD", "BOS", "EOS", "NEWLINE")
 
@@ -221,17 +223,7 @@ def source_files(raw_dir: Path, snapshot: str) -> tuple[Path, Path, dict]:
     metadata = job["files"][name]
     dump_url = base + name
     dump = download(dump_url, raw_dir / name, size=metadata["size"], sha1=metadata["sha1"])
-    archive = download(FONT_URL, raw_dir / "08_NotoSansCJKsc.zip")
-    font_path = raw_dir / "NotoSansCJKsc-Regular.otf"
-    with zipfile.ZipFile(archive) as zipped:
-        members = [n for n in zipped.namelist() if n.split("/")[-1] == font_path.name]
-        if len(members) != 1:
-            raise ValueError("The official font archive has an unexpected structure")
-        font_bytes = zipped.read(members[0])
-        if not font_path.exists():
-            font_path.write_bytes(font_bytes)
-        elif hashlib.sha256(font_bytes).hexdigest() != digest_file(font_path):
-            raise ValueError("Cached font differs from the pinned official archive")
+    font_path = download(FONT_URL, raw_dir / "NotoSansCJKsc-Regular.otf")
     return (
         dump,
         font_path,
@@ -244,7 +236,6 @@ def source_files(raw_dir: Path, snapshot: str) -> tuple[Path, Path, dict]:
             "dump_manifest_sha256": digest_file(status_path),
             "font_url": FONT_URL,
             "font_version": "Noto Sans CJK SC Regular 2.004",
-            "font_archive_sha256": digest_file(archive),
             "font_sha256": digest_file(font_path),
             "license_reference": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
             "font_license": "SIL Open Font License 1.1",

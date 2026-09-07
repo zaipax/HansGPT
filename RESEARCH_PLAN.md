@@ -145,6 +145,7 @@ binary_bitmap = probabilities >= threshold
 #### B. Noto Sans CJK SC 字体
 
 - 精确下载：[08_NotoSansCJKsc.zip（Sans 2.004，约 90MB）](https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/08_NotoSansCJKsc.zip)
+- 同版本官方 Regular 字体直链：[NotoSansCJKsc-Regular.otf](https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf)。服务器无法访问 Release 入口时可使用，仍需记录实际文件 SHA-256。
 - 版本页面：[Noto Sans CJK Version 2.004](https://github.com/notofonts/noto-cjk/releases/tag/Sans2.004)
 - 项目仓库：[notofonts/noto-cjk](https://github.com/notofonts/noto-cjk)
 - 字体许可证：[SIL Open Font License 1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE)

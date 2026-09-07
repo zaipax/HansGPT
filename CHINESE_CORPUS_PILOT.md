@@ -14,7 +14,7 @@ uv run python -m hansgpt_research.prepare_corpus \
 uv run python scripts/verify_corpus.py data/processed/zhwiki_binary_pilot_v1
 ```
 
-长任务使用 tmux，日志写入 `artifacts/logs/`。下载器支持断点续传，核对维基官方大小和 SHA-1，再记录 SHA-256；字体直接来自 Noto Sans CJK SC Regular 2.004 官方发布。已存在的输出目录不会被覆盖，复跑应指定新版本目录。源码修改在本地 worktree 完成并推送，服务器只拉取和运行。
+长任务使用 tmux，日志写入 `artifacts/logs/`。下载器支持断点续传，核对维基官方大小和 SHA-1，再记录 SHA-256；字体来自 [Noto 官方仓库 Sans2.004 标签的 Regular OTF](https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf)，不经镜像。已存在的输出目录不会被覆盖，复跑应指定新版本目录。源码修改在本地 worktree 完成并推送，服务器只拉取和运行。
 
 处理规则：
 

@@ -1,6 +1,9 @@
 import bz2
 import hashlib
+import importlib.util
+import json
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
@@ -144,3 +147,176 @@ def test_global_dedup_rejects_cross_split_exact_punctuation_and_near_copies(tmp_
     assert stats["rejected_near_duplicate"] == 1
     assert len(list(store.records("train"))) == len(list(store.records("test"))) == 1
     store.close()
+
+
+def test_rejected_foreign_text_bypasses_opencc_and_conversion_is_rechecked():
+    class Converter:
+        def __init__(self):
+            self.calls = []
+
+        def convert(self, text):
+            self.calls.append(text)
+            return "意外出现Latin" if text == "转换异常。" else text
+
+    converter = Converter()
+    stats = Counter()
+    assert clean_paragraphs(
+        "混杂English。\n含有１２３数字。\n纯中文段落。\n转换异常。",
+        converter,
+        stats,
+        min_han=2,
+        max_length=100,
+        wikitext=False,
+    ) == ["纯中文段落。"]
+    assert converter.calls == ["纯中文段落。", "转换异常。"]
+    assert stats["rejected_before_opencc"] == 2
+    assert stats["opencc_paragraphs_processed"] == 2
+    assert stats["rejected_non_chinese_or_unsupported_symbols"] == 3
+
+
+def test_source_scan_evidence_counts_last_yield_and_unvisited_shards(tmp_path):
+    paths = [tmp_path / f"part-{index}.parquet" for index in range(2)]
+    for index, path in enumerate(paths):
+        pq.write_table(
+            pa.Table.from_pylist(
+                [
+                    {
+                        "id": str(index),
+                        "url": "https://zh.wikipedia.org/wiki/正文",
+                        "title": "正文",
+                        "text": "正文",
+                    },
+                ]
+            ),
+            path,
+        )
+
+    def scan():
+        return {
+            "scanned_rows": 0,
+            "files": [
+                {"file": path.name, "expected_rows": 1, "scanned_rows": 0, "completed": False}
+                for path in paths
+            ],
+        }
+
+    partial = scan()
+    iterator = modelscope_pages(paths, "revision", 0, partial)
+    next(iterator)
+    assert partial["scanned_rows"] == 1
+    assert partial["files"][0]["completed"]
+    assert not partial["files"][1]["completed"]
+    iterator.close()
+    complete = scan()
+    assert len(list(modelscope_pages(paths, "revision", 0, complete))) == 2
+    assert complete["scanned_rows"] == 2 and all(item["completed"] for item in complete["files"])
+
+
+def load_verifier():
+    spec = importlib.util.spec_from_file_location(
+        "verify_corpus", Path(__file__).parents[1] / "scripts" / "verify_corpus.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_failed_verification_invalidates_previous_success_receipt(tmp_path):
+    receipt = tmp_path / "verification.json"
+    receipt.write_text('{"passed":true}')
+    with pytest.raises(FileNotFoundError):
+        load_verifier().verify(tmp_path)
+    assert not receipt.exists()
+
+
+def test_verifier_rejects_reused_content_addresses_before_reading_bitmaps(tmp_path):
+    (tmp_path / "glyph_inventory.json").write_text(
+        json.dumps(
+            {
+                "characters": {"一": 4, "二": 4},
+                "controls": {"0": "PAD", "1": "BOS", "2": "EOS", "3": "NEWLINE"},
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="inventory"):
+        load_verifier().verify_glyphs(tmp_path, {})
+
+
+def test_independent_sample_audit_compares_exact_shingles_without_lsh():
+    module = load_verifier()
+    text = "".join(chr(0x4E00 + index) for index in range(200))
+    sample = {"sample_id": "heldout", "split": "test", "text": text}
+    audit = module.SampledLeakageAudit([sample])
+    near = text[:100] + "雪" + text[101:]
+    audit.observe(
+        {
+            "sample_id": "training",
+            "source_page_id": "17",
+            "source_url": "public",
+            "text": near,
+            "text_sha256": hashlib.sha256(near.encode()).hexdigest(),
+        },
+        near,
+    )
+    report = audit.report()
+    assert report["training_paragraphs_scanned"] == 1
+    assert report["flagged_heldout_paragraphs"] == 1
+    assert 0.9 <= report["sample_results"][0]["maximum_train_jaccard"] < 1
+
+
+def test_verifier_compares_content_to_rerender_and_checks_control_frames(tmp_path, monkeypatch):
+    module = load_verifier()
+    raw = tmp_path / "raw"
+    font_path = raw / "20231101" / "NotoSansCJKsc-Regular.otf"
+    font_path.parent.mkdir(parents=True)
+    font_path.write_bytes(b"test font identity")
+    tile = np.zeros((32, 32), dtype=np.uint8)
+    tile[16, 8:24] = 1
+    bitmaps = np.stack([*control_tiles(), tile])
+    np.savez_compressed(tmp_path / "glyph_bank.npz", bitmaps=bitmaps)
+    (tmp_path / "glyph_inventory.json").write_text(
+        json.dumps(
+            {
+                "characters": {"一": 4},
+                "collisions": [],
+                "controls": {"0": "PAD", "1": "BOS", "2": "EOS", "3": "NEWLINE"},
+            }
+        )
+    )
+    manifest = {
+        "configuration": {"raw": str(raw), "snapshot": "20231101"},
+        "source": {"font_sha256": hashlib.sha256(font_path.read_bytes()).hexdigest()},
+        "glyphs": {
+            "shape": [5, 32, 32],
+            "font_size": 26,
+            "baseline_y": 27,
+            "render_threshold": 128,
+            "content_characters": 1,
+            "controls": 4,
+            "collision_groups": [],
+        },
+    }
+
+    class Font:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def getBestCmap(self):
+            return {ord("一"): "glyph"}
+
+    monkeypatch.setattr(module, "TTFont", lambda _: Font())
+    monkeypatch.setattr(module.ImageFont, "truetype", lambda *args, **kwargs: object())
+    monkeypatch.setattr(module, "render_binary", lambda *args: tile)
+    assert module.verify_glyphs(tmp_path, manifest)[0] == {"一": 4}
+    bitmaps[4, 16, 8] = 0
+    np.savez_compressed(tmp_path / "glyph_bank.npz", bitmaps=bitmaps)
+    with pytest.raises(ValueError, match="source character and font"):
+        module.verify_glyphs(tmp_path, manifest)
+    bitmaps[4] = tile
+    bitmaps[1, 0, 0] = 0
+    np.savez_compressed(tmp_path / "glyph_bank.npz", bitmaps=bitmaps)
+    with pytest.raises(ValueError, match="Control bitmap"):
+        module.verify_glyphs(tmp_path, manifest)

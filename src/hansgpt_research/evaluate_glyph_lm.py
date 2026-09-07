@@ -687,9 +687,11 @@ def evaluate(args: argparse.Namespace) -> None:
     device = torch.device(args.device)
     if device.type == "cuda" and os.environ.get("CUDA_VISIBLE_DEVICES") != "0":
         raise RuntimeError("This experiment is authorized on GPU0: set CUDA_VISIBLE_DEVICES=0")
-    evaluation_metadata = runtime_metadata(config, data_dir, device)
+    evaluation_metadata = runtime_metadata(config, data_dir, device, mode=metadata["mode"])
     if evaluation_metadata["data_sha256"] != metadata["data_sha256"]:
         raise ValueError("Evaluation data does not match the training checkpoint")
+    if evaluation_metadata["data_manifest_sha256"] != metadata["data_manifest_sha256"]:
+        raise ValueError("Evaluation manifest does not match the training checkpoint")
     completion_path = Path("artifacts/logs") / metadata["run_name"] / "training_complete.json"
     completion = json.loads(completion_path.read_text())
     if completion["status"] != "complete":

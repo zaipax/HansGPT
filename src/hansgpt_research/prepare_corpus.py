@@ -154,12 +154,17 @@ def clean_paragraphs(
 ) -> list[str]:
     accepted = []
     for line in (plain_wikitext(raw) if wikitext else raw).splitlines():
-        text = converter.convert(unicodedata.normalize("NFC", line)).translate(PUNCTUATION_MAP)
-        text = text.strip()
+        text = unicodedata.normalize("NFC", line).translate(PUNCTUATION_MAP).strip()
         if not text:
             continue
         stats["candidate_paragraphs"] += 1
         stats["candidate_characters"] += len(text)
+        if not ALLOWED.fullmatch(text):
+            stats["rejected_non_chinese_or_unsupported_symbols"] += 1
+            stats["rejected_before_opencc"] += 1
+            continue
+        text = converter.convert(text)
+        stats["opencc_paragraphs_processed"] += 1
         if not ALLOWED.fullmatch(text):
             stats["rejected_non_chinese_or_unsupported_symbols"] += 1
             continue
@@ -197,13 +202,22 @@ def wiki_pages(path: Path, max_pages: int):
                 break
 
 
-def modelscope_pages(paths: list[Path], revision: str, max_pages: int):
+def modelscope_pages(paths: list[Path], revision: str, max_pages: int, scan: dict | None = None):
     """The mirror contains extracted plaintext, not MediaWiki source markup."""
     count = 0
     for path in paths:
         parquet = pq.ParquetFile(path)
+        file_scan = (
+            next((item for item in scan["files"] if item["file"] == path.name), None)
+            if scan is not None
+            else None
+        )
         for batch in parquet.iter_batches(batch_size=512, columns=["id", "url", "title", "text"]):
             for row in batch.to_pylist():
+                if file_scan is not None:
+                    file_scan["scanned_rows"] += 1
+                    file_scan["completed"] = file_scan["scanned_rows"] == file_scan["expected_rows"]
+                    scan["scanned_rows"] += 1
                 yield {
                     "page_id": str(row["id"]),
                     "revision_id": None,
@@ -410,7 +424,14 @@ def modelscope_source_files(args: argparse.Namespace) -> tuple[list[Path], Path,
             sha256=metadata["sha256"],
         )
         paths.append(path)
-        files.append({**metadata, "download_url": url, "verified_sha256": metadata["sha256"]})
+        files.append(
+            {
+                **metadata,
+                "download_url": url,
+                "verified_sha256": metadata["sha256"],
+                "expected_rows": pq.ParquetFile(path).metadata.num_rows,
+            }
+        )
     font_path = download(FONT_URL, raw_dir / "NotoSansCJKsc-Regular.otf")
     return (
         paths,
@@ -420,6 +441,7 @@ def modelscope_source_files(args: argparse.Namespace) -> tuple[list[Path], Path,
             "files": files,
             "source_config_sha256": digest_file(config_path),
             "selected_shards": indices,
+            "snapshot_shard_count": len(config["files"]),
             "article_revision_available": False,
             "format": "upstream extracted plaintext Parquet: id, url, title, text",
             "font_url": FONT_URL,
@@ -439,10 +461,27 @@ def prepare(args: argparse.Namespace) -> dict:
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if args.source == "modelscope":
         paths, font_path, source = modelscope_source_files(args)
-        pages = modelscope_pages(paths, source["revision"], args.max_pages)
+        source_scan = {
+            "all_snapshot_shards_selected": len(source["selected_shards"])
+            == source["snapshot_shard_count"],
+            "all_selected_rows_scanned": False,
+            "expected_rows": sum(item["expected_rows"] for item in source["files"]),
+            "scanned_rows": 0,
+            "files": [
+                {
+                    "file": path.name,
+                    "expected_rows": item["expected_rows"],
+                    "scanned_rows": 0,
+                    "completed": False,
+                }
+                for path, item in zip(paths, source["files"], strict=True)
+            ],
+        }
+        pages = modelscope_pages(paths, source["revision"], args.max_pages, source_scan)
     else:
         dump, font_path, source = source_files(Path(args.raw) / args.snapshot, args.snapshot)
         pages = wiki_pages(dump, args.max_pages)
+        source_scan = None
     font = ImageFont.truetype(str(font_path), size=26)
     with TTFont(font_path) as ttfont:
         supported = set(ttfont.getBestCmap() or {})
@@ -506,6 +545,12 @@ def prepare(args: argparse.Namespace) -> dict:
         if args.max_han and total_han >= args.max_han:
             break
     store.commit()
+    if source_scan is not None:
+        source_scan["all_selected_rows_scanned"] = all(
+            item["completed"] for item in source_scan["files"]
+        )
+        if source_scan["scanned_rows"] != stats["article_pages_scanned"]:
+            raise ValueError("Source scan row accounting mismatch")
     if any(next(store.records(split), None) is None for split in SPLITS):
         store.close()
         raise ValueError("Need nonempty train, validation and test splits; increase the sample")
@@ -584,14 +629,19 @@ def prepare(args: argparse.Namespace) -> dict:
     store.close()
     spool_path.unlink()
     spool_path.with_name(spool_path.name + "-journal").unlink(missing_ok=True)
-    full_source = args.source == "modelscope" and len(source["selected_shards"]) == 6
-    exhaustive = full_source and args.max_pages == 0 and args.max_han == 0
+    exhaustive = bool(
+        source_scan is not None
+        and source_scan["all_snapshot_shards_selected"]
+        and source_scan["all_selected_rows_scanned"]
+    )
     report = {
         "status": "full_snapshot_experiment_corpus" if exhaustive else "bounded_experiment_corpus",
         "created_at": datetime.now(UTC).isoformat(),
         "git_commit": commit,
         "configuration": vars(args),
         "source": source,
+        "source_scan": source_scan,
+        "cleaning_version": "strict_han_v2_prefilter_then_opencc",
         "filter_stats": dict(stats),
         "splits": split_stats,
         "glyphs": {

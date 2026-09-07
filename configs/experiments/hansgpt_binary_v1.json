@@ -1,5 +1,9 @@
 {
   "experiment": "hansgpt_binary_v1",
+  "data_requirements": {
+    "full_source_provider": "ModelScope",
+    "full_source_shards": 6
+  },
   "model": {
     "hidden_size": 768,
     "num_hidden_layers": 12,
@@ -23,6 +27,8 @@
     "precision": "fp16",
     "gradient_checkpointing": true,
     "num_workers": 2,
+    "sampler": "random",
+    "sortish_pool_batches": 64,
     "log_every_steps": 10,
     "validate_every_tokens": 10000000,
     "checkpoint_every_steps": 200,

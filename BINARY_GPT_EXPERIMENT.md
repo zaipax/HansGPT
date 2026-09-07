@@ -25,11 +25,11 @@ uv run pytest -q
 
 uv run python -m hansgpt_research.prepare_corpus \
   --shards 2 --max-pages 10000 --max-han 500000 \
-  --output data/processed/modelscope_zhwiki_smoke_v1
-uv run python scripts/verify_corpus.py data/processed/modelscope_zhwiki_smoke_v1
+  --output data/processed/modelscope_zhwiki_smoke_v2
+uv run python scripts/verify_corpus.py data/processed/modelscope_zhwiki_smoke_v2
 
 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0 uv run python -m hansgpt_research.train_glyph_lm \
-  --data data/processed/modelscope_zhwiki_smoke_v1 \
+  --data data/processed/modelscope_zhwiki_smoke_v2 \
   --run-name hansgpt_binary_v1_smoke --mode smoke --smoke-tokens 32768
 
 uv run python -m hansgpt_research.prepare_corpus \
@@ -48,6 +48,10 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0 uv run python -m hansgpt_res
 ```
 
 以上为操作模板。实际生效的 batch、累积、预算、配置哈希和启动命令随运行记录保存；不能用烟测完成标记代替正式训练完成。长任务使用独立 tmux 会话和日志；断点恢复必须匹配数据、模型和配置，并恢复优化器、GradScaler、随机状态及采样位置。
+
+训练与评估必须检查绑定当前 manifest 和八个模型输入文件 SHA-256 的成功验证凭据；完整训练还检查六个源分片的实际扫描行数和完成状态。验证器独立重渲染全部字形，并对固定抽取的验证／测试段落执行全训练集五字片段重叠审计。抽检覆盖有限，不据此宣称完全没有语义污染。
+
+可选 `--sampler sortish` 将相近长度的文档块组合成批次，以减少 padding；它保留每个样本和目标、确定性的逐轮随机化及恢复游标。启用前先用独立 benchmark 与随机采样比较，并把实际选项固定在正式运行配置中。
 
 ## 完成和评估标准
 

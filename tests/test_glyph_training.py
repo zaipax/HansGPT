@@ -1,6 +1,8 @@
 """Numerical, scoring and checkpoint invariants; execute on the training server."""
 
+import json
 import random
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -13,10 +15,14 @@ from hansgpt_research.evaluate_glyph_lm import (
 )
 from hansgpt_research.train_glyph_lm import (
     EpochSampler,
+    SortishEpochSampler,
     learning_rate,
     loss_sum,
     restore_rng,
     save_checkpoint,
+    sequence_lengths,
+    sha256,
+    verify_data_readiness,
 )
 
 
@@ -131,3 +137,140 @@ def test_baseline_selects_own_validation_threshold_and_excludes_controls():
     assert actual["threshold_metrics"]["0.15"]["foreground_f1"] == pytest.approx(2 / 3)
     assert actual["threshold_metrics"]["0.25"]["foreground_f1"] == pytest.approx(0.1)
     assert counts.tolist() == [9, 1, 100000]
+
+
+def write_ready_fixture(directory, *, full=False):
+    """Readiness unit fixture; binary-format validation belongs to the independent verifier."""
+    names = ["glyph_bank.npz", "glyph_inventory.json"]
+    names += [
+        f"{split}.{suffix}"
+        for split in ("train", "validation", "test")
+        for suffix in ("uint16", "offsets.npy")
+    ]
+    for name in names:
+        (directory / name).write_bytes(name.encode())
+    hashes = {name: sha256(directory / name) for name in names}
+    manifest = {"status": "bounded_experiment_corpus", "output_sha256": hashes}
+    if full:
+        files = [
+            {"file": f"{index}.parquet", "expected_rows": 3, "scanned_rows": 3, "completed": True}
+            for index in range(6)
+        ]
+        manifest.update(
+            status="full_snapshot_experiment_corpus",
+            source={
+                "provider": "ModelScope",
+                "selected_shards": list(range(6)),
+                "files": [{"path": file["file"], "expected_rows": 3} for file in files],
+            },
+            source_scan={
+                "all_snapshot_shards_selected": True,
+                "all_selected_rows_scanned": True,
+                "expected_rows": 18,
+                "scanned_rows": 18,
+                "files": files,
+            },
+        )
+    (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    receipt = {
+        "passed": True,
+        "manifest_sha256": sha256(directory / "manifest.json"),
+        "model_consumed_sha256": hashes,
+    }
+    (directory / "verification.json").write_text(json.dumps(receipt), encoding="utf-8")
+    return manifest, receipt
+
+
+@pytest.mark.parametrize("tamper", ["array", "inventory", "manifest", "failed", "interrupted"])
+def test_data_readiness_rejects_tampered_or_interrupted_exports(tmp_path, tamper):
+    manifest, receipt = write_ready_fixture(tmp_path)
+    assert verify_data_readiness(tmp_path)["verification"]["passed"]
+    if tamper in {"array", "inventory"}:
+        name = "train.uint16" if tamper == "array" else "glyph_inventory.json"
+        (tmp_path / name).write_bytes(b"changed since verification")
+    elif tamper == "manifest":
+        manifest["status"] = "tampered"
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    elif tamper == "failed":
+        receipt["passed"] = False
+        (tmp_path / "verification.json").write_text(json.dumps(receipt), encoding="utf-8")
+    else:
+        # A verifier removes its old receipt before a rerun; an interrupted rerun is not ready.
+        (tmp_path / "verification.json").unlink()
+        (tmp_path / "verification.json.tmp").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError):
+        verify_data_readiness(tmp_path)
+
+
+def test_full_training_requires_actual_six_shard_scan_proof(tmp_path):
+    write_ready_fixture(tmp_path)
+    with pytest.raises(ValueError, match="entire source scan"):
+        verify_data_readiness(tmp_path, require_full_snapshot=True)
+    manifest, receipt = write_ready_fixture(tmp_path, full=True)
+    verify_data_readiness(
+        tmp_path, require_full_snapshot=True, expected_provider="ModelScope", expected_shards=6
+    )
+    # Even a reissued receipt cannot turn a partial scan into a full source experiment.
+    manifest["source_scan"]["files"][-1]["scanned_rows"] = 2
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    receipt["manifest_sha256"] = sha256(tmp_path / "manifest.json")
+    (tmp_path / "verification.json").write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match="entire source scan"):
+        verify_data_readiness(
+            tmp_path, require_full_snapshot=True, expected_provider="ModelScope", expected_shards=6
+        )
+
+
+def test_data_readiness_rejects_missing_final_manifest(tmp_path):
+    write_ready_fixture(tmp_path)
+    (tmp_path / "manifest.json").rename(tmp_path / "manifest.json.tmp")
+    with pytest.raises(ValueError, match="finalized"):
+        verify_data_readiness(tmp_path)
+
+
+def test_sortish_sampler_preserves_all_chunks_and_exact_resume_order():
+    lengths = np.array([3, 17, 128, 7, 1024, 3, 90, 256, 4, 2, 61, 9, 600, 45, 80])
+    full = list(SortishEpochSampler(lengths, seed=7, epoch=2, batch_size=4, pool_batches=2))
+    assert sorted(full) == list(range(len(lengths)))
+    for cursor in (0, 4, 8, 12, 15):
+        resumed = list(
+            SortishEpochSampler(
+                lengths, seed=7, epoch=2, batch_size=4, cursor=cursor, pool_batches=2
+            )
+        )
+        assert resumed == full[cursor:]
+    assert list(SortishEpochSampler(lengths, seed=7, epoch=3, batch_size=4, pool_batches=2)) != full
+    # No global random state is consumed by constructing the epoch permutation.
+    torch.manual_seed(51)
+    before = torch.get_rng_state().clone()
+    list(SortishEpochSampler(lengths, seed=7, epoch=2, batch_size=4))
+    assert torch.equal(before, torch.get_rng_state())
+
+
+def test_sortish_reduces_padding_and_preserves_document_chunk_lengths():
+    class SizedDataset(SimpleNamespace):
+        def __len__(self):
+            return 4
+
+    dataset = SizedDataset(
+        sequence_length=8,
+        offsets=np.array([0, 5, 16, 18]),
+        chunk_offsets=np.array([0, 1, 3, 4]),
+        target_count=15,
+    )
+    # Four valid target chunks: 4; 8+2; 1. Exact multiples must not create zero-sized chunks.
+    assert sequence_lengths(dataset).tolist() == [4, 8, 2, 1]
+    lengths = np.tile(np.array([8, 64, 256, 1024]), 16)
+    random_order = list(EpochSampler(len(lengths), seed=7, epoch=0))
+    sortish_order = list(
+        SortishEpochSampler(lengths, seed=7, epoch=0, batch_size=4, pool_batches=64)
+    )
+
+    def padded_positions(order):
+        return sum(
+            int(lengths[order[start : start + 4]].max()) * len(order[start : start + 4])
+            for start in range(0, len(order), 4)
+        )
+
+    assert padded_positions(sortish_order) == int(lengths.sum())
+    assert padded_positions(sortish_order) < padded_positions(random_order)

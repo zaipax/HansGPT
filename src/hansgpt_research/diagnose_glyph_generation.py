@@ -312,6 +312,7 @@ class GlyphScorer:
         legal_prefix = int(illegal_positions[0]) if len(illegal_positions) else body_count
         sentence_ends = np.flatnonzero(memberships["sentence_end"][:legal_prefix])
         legal_sentence_prefix = int(sentence_ends[-1]) + 1 if len(sentence_ends) else 0
+        sentence_han_count = int(memberships["han_only"][:legal_sentence_prefix].sum())
         array = generated.cpu().numpy()
         packed = np.packbits(array.reshape(count, 1024), axis=1)
         exact_text = []
@@ -336,7 +337,15 @@ class GlyphScorer:
             "initial_legal_content_prefix_tiles": legal_prefix,
             "first_illegal_body_position": legal_prefix + 1 if legal_prefix < body_count else None,
             "legal_sentence_prefix_tiles": legal_sentence_prefix,
+            "legal_sentence_prefix_han_count": sentence_han_count,
             "has_complete_legal_sentence_prefix": bool(legal_sentence_prefix),
+            "has_nontrivial_legal_sentence_prefix": bool(
+                legal_sentence_prefix >= 8 and sentence_han_count >= 4
+            ),
+            "nontrivial_sentence_definition": (
+                "initial exact-legal prefix ending in sentence punctuation; "
+                "at least 8 content grids and 4 Han grids; surface form only, not semantic fluency"
+            ),
             "complete_legal_sentence_before_eos": bool(
                 terminal_eos and body_count >= 8 and legal_sentence_prefix == body_count
             ),
@@ -449,7 +458,9 @@ def summarize_examples(examples: list[dict], seed: int) -> list[dict]:
         "content_legal_rate_before_terminal_eos",
         "initial_legal_content_prefix_tiles",
         "legal_sentence_prefix_tiles",
+        "legal_sentence_prefix_han_count",
         "has_complete_legal_sentence_prefix",
+        "has_nontrivial_legal_sentence_prefix",
         "complete_legal_sentence_before_eos",
         "mean_nearest_hamming_bits",
         "adjacent_exact_repeat_rate",

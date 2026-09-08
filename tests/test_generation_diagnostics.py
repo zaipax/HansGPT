@@ -139,6 +139,53 @@ def test_legal_sentence_prefix_stops_at_first_invalid_grid():
     assert not result["has_complete_legal_sentence_prefix"]
 
 
+@pytest.mark.parametrize(
+    ("identifiers", "han_count", "nontrivial"),
+    [
+        ([7], 0, False),
+        ([4, 7], 1, False),
+        ([4, 6, 6, 6, 6, 6, 6, 7], 1, False),
+        ([4, 5, 4, 5, 4, 5, 6, 7, 2], 6, True),
+    ],
+)
+def test_nontrivial_sentence_requires_eight_content_grids_and_four_han(
+    identifiers, han_count, nontrivial
+):
+    dataset = toy_dataset()
+    sequence = dataset.glyph_bank[identifiers].unsqueeze(0)
+    result = GlyphScorer(dataset, torch.device("cpu")).score(
+        sequence, requested_horizon=len(identifiers)
+    )
+    assert result["has_complete_legal_sentence_prefix"]  # The historical field stays unchanged.
+    assert result["legal_sentence_prefix_han_count"] == han_count
+    assert result["has_nontrivial_legal_sentence_prefix"] is nontrivial
+    assert "not semantic fluency" in result["nontrivial_sentence_definition"]
+
+
+def test_summary_preserves_new_sentence_measures_without_changing_old_flag():
+    example = {
+        "cohort": "audit",
+        "prompt_length": 16,
+        "threshold": 0.45,
+        "strategy": "mode_threshold",
+        "natural_stop": False,
+        "terminated_by_eos": False,
+        "early_eos_before_eight": False,
+        "hit_length_cap": True,
+        "horizons": {
+            "128": {
+                "has_complete_legal_sentence_prefix": True,
+                "legal_sentence_prefix_han_count": 0,
+                "has_nontrivial_legal_sentence_prefix": False,
+            }
+        },
+    }
+    summary = summarize_examples([example], seed=3)[0]["metrics"]
+    assert summary["has_complete_legal_sentence_prefix"]["mean"] == 1
+    assert summary["legal_sentence_prefix_han_count"]["mean"] == 0
+    assert summary["has_nontrivial_legal_sentence_prefix"]["mean"] == 0
+
+
 def test_binary_dtype_and_value_checks_reject_grayscale_and_float_arrays():
     with pytest.raises(ValueError, match="uint8"):
         assert_binary(torch.zeros(1, 1, 1, 32, 32))

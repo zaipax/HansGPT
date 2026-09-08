@@ -2,6 +2,8 @@
 
 本实验直接将每个 32×32 二值格子编码成一个视觉 embedding，以因果语言模型预测下一格的 1024 个二值像素。输入没有字符 ID embedding，输出没有字符分类头。训练使用逐像素 BCE logits，生成时二值化并反馈同一个 CNN。
 
+该协议对应的完整训练与评估已完成，实际数据、指标、原始二值续写及限制见 [正式实验结果](reports/hansgpt_binary_v1/REPORT.md)。
+
 ## 固定实验条件
 
 - 数据：ModelScope `AI-ModelScope/wikipedia` 的 `20231101.zh` 六个分片，镜像修订和文件 SHA-256 固定在 `configs/datasets/modelscope_wikipedia_zh.json`，内容哈希已与上游固定版本核对。

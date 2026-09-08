@@ -1,0 +1,443 @@
+{
+  "created_at": "2026-09-07T18:03:44.196562+00:00",
+  "git_commit": "79b1d17927f10b13e3838a9aa3e5bb4482d374d9",
+  "git_branch": "main",
+  "config": {
+    "experiment": "hansgpt_binary_v1",
+    "data_requirements": {
+      "full_source_provider": "ModelScope",
+      "full_source_shards": 6
+    },
+    "model": {
+      "hidden_size": 768,
+      "num_hidden_layers": 12,
+      "num_attention_heads": 12,
+      "num_key_value_heads": 4,
+      "intermediate_size": 2048,
+      "max_position_embeddings": 2048,
+      "glyph_deduplication_strategy": "packed",
+      "rms_norm_eps": 1e-06,
+      "rope_theta": 10000.0,
+      "attention_dropout": 0.0,
+      "initializer_range": 0.02,
+      "deduplicate_glyphs": true,
+      "glyph_encode_chunk_size": 256
+    },
+    "training": {
+      "seed": 20260907,
+      "sequence_length": 1024,
+      "batch_size": 64,
+      "gradient_accumulation_steps": 4,
+      "learning_rate": 0.0003,
+      "minimum_learning_rate_ratio": 0.1,
+      "weight_decay": 0.1,
+      "warmup_tokens": 10000000,
+      "target_tokens": 1500000000,
+      "max_epochs": 1000,
+      "max_grad_norm": 1.0,
+      "precision": "fp16",
+      "gradient_checkpointing": true,
+      "num_workers": 2,
+      "sampler": "sortish",
+      "sortish_pool_batches": 64,
+      "log_every_steps": 10,
+      "validate_every_tokens": 10000000,
+      "checkpoint_every_steps": 200,
+      "early_stopping_patience": 0,
+      "early_stopping_min_tokens": 100000000,
+      "early_stopping_min_delta": 1e-05,
+      "max_consecutive_overflows": 20
+    },
+    "evaluation": {
+      "batch_size": 32,
+      "threshold_candidates": [
+        0.25,
+        0.3,
+        0.35,
+        0.4,
+        0.45,
+        0.5,
+        0.55,
+        0.6,
+        0.65,
+        0.7,
+        0.75
+      ],
+      "retrieval_query_chunk": 256,
+      "retrieval_gallery_chunk": 2048,
+      "generation_examples": 3,
+      "generation_prompt_tokens": 16,
+      "generation_lengths": [
+        32,
+        128,
+        512
+      ]
+    }
+  },
+  "config_sha256": "9e080a9268187c8b3fbfcdb0b6b0d2bf383f10fb2f5b037a4f10b200f0a52819",
+  "data_dir": "data/processed/modelscope_zhwiki_full_v1",
+  "data_sha256": {
+    "glyph_bank.npz": "9504ab00542fb415beec4db7abd9ee53b7a8901b57636da96f8489fe95b78db8",
+    "glyph_inventory.json": "0bbb481c08df30d04de1d20bebe0e2dac9a6c244d46fc8b61953f4378d71a583",
+    "test.offsets.npy": "23a01c79081c0f14d68437a32dff3fa113c75c3a0a9445efec25e8d3a050a4ef",
+    "test.uint16": "d93393e4846943a72134a45d30b3ef2dc33ffb16735b0bd1273c2a96abf96ceb",
+    "train.offsets.npy": "9b6b22080cf2d75b7d7a863ca8209e67bb5b8ba5d16b44414916749c2ec89842",
+    "train.uint16": "3d2cb1ef62499f10c1e65b17d5afceb2a9ada2333c0e77eb063da6718b572cb1",
+    "validation.offsets.npy": "1f657c4010f5579cae53856161b4868602b73b00aa2b4b6bea79e8dc3d52d194",
+    "validation.uint16": "107771a8dbbe3b2899645a2b438757f45c9eea72c130da17386264f325c35f07"
+  },
+  "data_verification_sha256": "3d78ed4a4f7c063b49cdf982a9ad77e83b3ff352b6a28d6e1a98ae753f258461",
+  "data_manifest_sha256": "78519dc4f29f5612c9a0633c3b2a9d46e08b87c5ed9bf347cb987952ab83a2f6",
+  "model_revision": "random initialization; architecture pinned by git_commit",
+  "tokenizer_revision": "none; one binary 32x32 glyph is one sequence position",
+  "versions": {
+    "torch": "2.8.0+cu128",
+    "numpy": "2.5.2",
+    "pillow": "12.3.0",
+    "transformers": "5.16.1"
+  },
+  "device": "cuda",
+  "gpu": "Tesla V100S-PCIE-32GB",
+  "cuda_runtime": "12.8",
+  "cuda_visible_devices": "0",
+  "seed": 20260907,
+  "precision": "fp16",
+  "mode": "full",
+  "run_name": "hansgpt_binary_v1",
+  "sampler": {
+    "algorithm": "sortish",
+    "version": 1,
+    "pool_batches": 64
+  },
+  "parameters": 78118368,
+  "metadata_file_sha256": "9e91856405fbc2c72553732b54c1276f3bde34dc188af090fd04a0bfca24ccbf",
+  "corpus_manifest": {
+    "status": "full_snapshot_experiment_corpus",
+    "created_at": "2026-09-07T17:10:45.886175+00:00",
+    "git_commit": "9a92e0475fe476c7a2d4d05aaacfdc1f9d4e59b3",
+    "configuration": {
+      "source": "modelscope",
+      "source_config": "configs/datasets/modelscope_wikipedia_zh.json",
+      "snapshot": "20231101",
+      "shards": "all",
+      "raw": "data/raw/hansgpt_modelscope_wikipedia",
+      "output": "data/processed/modelscope_zhwiki_full_v1",
+      "max_pages": 0,
+      "max_han": 0,
+      "min_han": 40,
+      "seed": 20260907
+    },
+    "source": {
+      "provider": "ModelScope",
+      "dataset": "AI-ModelScope/wikipedia",
+      "dataset_id": 33223,
+      "subset": "20231101.zh",
+      "snapshot": "20231101",
+      "revision": "af6f00069c4a886b60b7b08d80882efde42c5432",
+      "upstream_dataset": "wikimedia/wikipedia",
+      "upstream_revision": "b04c8d1ceb2f5cd4588862100d08de323dccfbaa",
+      "upstream_url": "https://huggingface.co/datasets/wikimedia/wikipedia",
+      "license": "Underlying Wikipedia text: CC BY-SA and GFDL; retain page attribution and inspect page-specific rights.",
+      "license_discrepancy": "ModelScope metadata labels the mirror Apache-2.0, whereas its upstream dataset card identifies Wikipedia CC BY-SA/GFDL. The mirror label does not replace the underlying content license.",
+      "files": [
+        {
+          "path": "20231101.zh/train-00000-of-00006.parquet",
+          "size": 587109027,
+          "sha256": "853ddf4a138c792ad7386d6de831788f96326c03e1e3349f7a315498392e8b56",
+          "download_url": "https://modelscope.cn/api/v1/datasets/AI-ModelScope/wikipedia/repo?Source=SDK&Revision=af6f00069c4a886b60b7b08d80882efde42c5432&FilePath=20231101.zh%2Ftrain-00000-of-00006.parquet&View=false",
+          "verified_sha256": "853ddf4a138c792ad7386d6de831788f96326c03e1e3349f7a315498392e8b56",
+          "expected_rows": 230792
+        },
+        {
+          "path": "20231101.zh/train-00001-of-00006.parquet",
+          "size": 263629009,
+          "sha256": "038b08e5aae38b5a1671794cee3fa0d4952c0d00fa0890a903d2de3f3fe5f703",
+          "download_url": "https://modelscope.cn/api/v1/datasets/AI-ModelScope/wikipedia/repo?Source=SDK&Revision=af6f00069c4a886b60b7b08d80882efde42c5432&FilePath=20231101.zh%2Ftrain-00001-of-00006.parquet&View=false",
+          "verified_sha256": "038b08e5aae38b5a1671794cee3fa0d4952c0d00fa0890a903d2de3f3fe5f703",
+          "expected_rows": 230792
+        },
+        {
+          "path": "20231101.zh/train-00002-of-00006.parquet",
+          "size": 126796358,
+          "sha256": "ec8f6c0dd1418b8fcd454278fb4f2bc7cd0ce8312f29c80b672533942601338f",
+          "download_url": "https://modelscope.cn/api/v1/datasets/AI-ModelScope/wikipedia/repo?Source=SDK&Revision=af6f00069c4a886b60b7b08d80882efde42c5432&FilePath=20231101.zh%2Ftrain-00002-of-00006.parquet&View=false",
+          "verified_sha256": "ec8f6c0dd1418b8fcd454278fb4f2bc7cd0ce8312f29c80b672533942601338f",
+          "expected_rows": 230791
+        },
+        {
+          "path": "20231101.zh/train-00003-of-00006.parquet",
+          "size": 262039932,
+          "sha256": "4884e4933fa91f46dc9bf711db8be07f368da59b8cfc2e00e895a65a3284cbb1",
+          "download_url": "https://modelscope.cn/api/v1/datasets/AI-ModelScope/wikipedia/repo?Source=SDK&Revision=af6f00069c4a886b60b7b08d80882efde42c5432&FilePath=20231101.zh%2Ftrain-00003-of-00006.parquet&View=false",
+          "verified_sha256": "4884e4933fa91f46dc9bf711db8be07f368da59b8cfc2e00e895a65a3284cbb1",
+          "expected_rows": 230791
+        },
+        {
+          "path": "20231101.zh/train-00004-of-00006.parquet",
+          "size": 256719920,
+          "sha256": "415a5cd235a359a009c6bd6d488c3d9ee81ed3220b9f33fd04214558bc5150cd",
+          "download_url": "https://modelscope.cn/api/v1/datasets/AI-ModelScope/wikipedia/repo?Source=SDK&Revision=af6f00069c4a886b60b7b08d80882efde42c5432&FilePath=20231101.zh%2Ftrain-00004-of-00006.parquet&View=false",
+          "verified_sha256": "415a5cd235a359a009c6bd6d488c3d9ee81ed3220b9f33fd04214558bc5150cd",
+          "expected_rows": 230791
+        },
+        {
+          "path": "20231101.zh/train-00005-of-00006.parquet",
+          "size": 224856014,
+          "sha256": "803ae27118b1daf9be4403b57b679b8ce065fbffdfdea0c33c517255c17478df",
+          "download_url": "https://modelscope.cn/api/v1/datasets/AI-ModelScope/wikipedia/repo?Source=SDK&Revision=af6f00069c4a886b60b7b08d80882efde42c5432&FilePath=20231101.zh%2Ftrain-00005-of-00006.parquet&View=false",
+          "verified_sha256": "803ae27118b1daf9be4403b57b679b8ce065fbffdfdea0c33c517255c17478df",
+          "expected_rows": 230791
+        }
+      ],
+      "source_config_sha256": "6a157eb526e1a6700e463ddfb13f4ce8974039904eb4679fb0738c71b66228a9",
+      "selected_shards": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "snapshot_shard_count": 6,
+      "article_revision_available": false,
+      "format": "upstream extracted plaintext Parquet: id, url, title, text",
+      "font_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+      "font_version": "Noto Sans CJK SC Regular 2.004",
+      "font_sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+      "font_license": "SIL Open Font License 1.1"
+    },
+    "source_scan": {
+      "all_snapshot_shards_selected": true,
+      "all_selected_rows_scanned": true,
+      "expected_rows": 1384748,
+      "scanned_rows": 1384748,
+      "files": [
+        {
+          "file": "train-00000-of-00006.parquet",
+          "expected_rows": 230792,
+          "scanned_rows": 230792,
+          "completed": true
+        },
+        {
+          "file": "train-00001-of-00006.parquet",
+          "expected_rows": 230792,
+          "scanned_rows": 230792,
+          "completed": true
+        },
+        {
+          "file": "train-00002-of-00006.parquet",
+          "expected_rows": 230791,
+          "scanned_rows": 230791,
+          "completed": true
+        },
+        {
+          "file": "train-00003-of-00006.parquet",
+          "expected_rows": 230791,
+          "scanned_rows": 230791,
+          "completed": true
+        },
+        {
+          "file": "train-00004-of-00006.parquet",
+          "expected_rows": 230791,
+          "scanned_rows": 230791,
+          "completed": true
+        },
+        {
+          "file": "train-00005-of-00006.parquet",
+          "expected_rows": 230791,
+          "scanned_rows": 230791,
+          "completed": true
+        }
+      ]
+    },
+    "cleaning_version": "strict_han_v3_artifact_rejection",
+    "filter_stats": {
+      "article_pages_scanned": 1384748,
+      "candidate_paragraphs": 28030704,
+      "candidate_characters": 1004928262,
+      "opencc_paragraphs_processed": 14036457,
+      "rejected_non_chinese_or_unsupported_symbols": 13994247,
+      "rejected_before_opencc": 13994247,
+      "rejected_short": 12737605,
+      "retained_paragraphs": 915748,
+      "rejected_empty_parentheses": 326039,
+      "rejected_unrenderable": 1633,
+      "rejected_empty_labeled_parentheses": 45092,
+      "rejected_near_duplicate": 1516,
+      "rejected_exact_duplicate": 8104,
+      "rejected_missing_numeric_slot": 301,
+      "rejected_punctuation_variant": 404,
+      "rejected_repeated_character": 15,
+      "near_duplicate_candidate_limit_reached": 3057
+    },
+    "splits": {
+      "train": {
+        "paragraphs": 897245,
+        "source_pages": 296257,
+        "han_characters": 85236554,
+        "grid_tokens_including_bos_eos": 96557521
+      },
+      "validation": {
+        "paragraphs": 9162,
+        "source_pages": 3047,
+        "han_characters": 875491,
+        "grid_tokens_including_bos_eos": 988590
+      },
+      "test": {
+        "paragraphs": 9341,
+        "source_pages": 2996,
+        "han_characters": 897588,
+        "grid_tokens_including_bos_eos": 1015363
+      }
+    },
+    "deduplication": {
+      "exact": "global SHA-256 of normalized text and punctuation-stripped Han text",
+      "near": "Eight smallest CRC32 character-five-gram hashes; at least two shared anchors, length ratio >=0.9; first 100 candidates by shared-anchor count; confirm exact character-five-gram set Jaccard >=0.9; keep first occurrence",
+      "recall": "Approximate candidate generation; not exhaustive semantic deduplication",
+      "split": "source-page-disjoint deterministic hash 98/1/1 after global deduplication"
+    },
+    "limitations": [
+      "Snapshot and selected files are scanned in source order; Wikipedia is domain-biased.",
+      "Mixed-script, numeric and unsupported-symbol paragraphs are rejected intact.",
+      "Known empty-value extraction artifacts are rejected; source omissions can remain.",
+      "Chinese Wikipedia provenance and strict character checks; no statistical language ID.",
+      "Near-duplicate recall is approximate; no external benchmark decontamination.",
+      "Document splits share characters; no character-disjoint generalization claim.",
+      "Font collisions are reported, not treated as evidence of distinct visual identities.",
+      "Retain per-page attribution and inspect page-specific rights before redistribution."
+    ],
+    "versions": {
+      "numpy": "2.5.2",
+      "pyarrow": "23.0.1",
+      "pillow": "12.3.0",
+      "fonttools": "4.63.0",
+      "mwparserfromhell": "0.7.2",
+      "regex": "2026.7.19",
+      "opencc-python-reimplemented": "0.1.7"
+    },
+    "normalization_unicode_version": "15.0.0",
+    "output_sha256": {
+      "glyph_bank.npz": "9504ab00542fb415beec4db7abd9ee53b7a8901b57636da96f8489fe95b78db8",
+      "glyph_inventory.json": "0bbb481c08df30d04de1d20bebe0e2dac9a6c244d46fc8b61953f4378d71a583",
+      "test.offsets.npy": "23a01c79081c0f14d68437a32dff3fa113c75c3a0a9445efec25e8d3a050a4ef",
+      "test.parquet": "0ca64215d124e372fe871e864c63216f9104427152d93a05232206995028bcdf",
+      "test.txt": "bab68d358396daa43cf7c73d7a6839f63a99b5f655ed909a31d876a7a6cee027",
+      "test.uint16": "d93393e4846943a72134a45d30b3ef2dc33ffb16735b0bd1273c2a96abf96ceb",
+      "train.offsets.npy": "9b6b22080cf2d75b7d7a863ca8209e67bb5b8ba5d16b44414916749c2ec89842",
+      "train.parquet": "8b08d548b5f2e4426c275ba6596a6be637703ed866703a12d6503727cc6bb48b",
+      "train.txt": "4fd286f2be8b9329dbf21c4e782198a654ca119fa5a2ac70b69b13d27d4ff325",
+      "train.uint16": "3d2cb1ef62499f10c1e65b17d5afceb2a9ada2333c0e77eb063da6718b572cb1",
+      "validation.offsets.npy": "1f657c4010f5579cae53856161b4868602b73b00aa2b4b6bea79e8dc3d52d194",
+      "validation.parquet": "c284288a010f5574cd5fc743eb9dbdf132d5d4df746cdeb24c134e8e01e29067",
+      "validation.txt": "2f02127d47b7b534f4e43e20ccc63aaf1000975a8dccb0308f3016c3ec8f917d",
+      "validation.uint16": "107771a8dbbe3b2899645a2b438757f45c9eea72c130da17386264f325c35f07"
+    },
+    "glyphs": {
+      "content_characters": 11919,
+      "controls": 4,
+      "dtype": "uint8 containing only 0 and 1",
+      "shape": [
+        11923,
+        32,
+        32
+      ],
+      "font_size": 26,
+      "baseline_y": 27,
+      "render_threshold": 128,
+      "collision_groups": [
+        [
+          "㮣",
+          "槩"
+        ]
+      ],
+      "unrenderable_character_count": 546
+    }
+  },
+  "verification": {
+    "passed": true,
+    "manifest_sha256": "78519dc4f29f5612c9a0633c3b2a9d46e08b87c5ed9bf347cb987952ab83a2f6",
+    "model_consumed_sha256": {
+      "glyph_bank.npz": "9504ab00542fb415beec4db7abd9ee53b7a8901b57636da96f8489fe95b78db8",
+      "glyph_inventory.json": "0bbb481c08df30d04de1d20bebe0e2dac9a6c244d46fc8b61953f4378d71a583",
+      "test.offsets.npy": "23a01c79081c0f14d68437a32dff3fa113c75c3a0a9445efec25e8d3a050a4ef",
+      "test.uint16": "d93393e4846943a72134a45d30b3ef2dc33ffb16735b0bd1273c2a96abf96ceb",
+      "train.offsets.npy": "9b6b22080cf2d75b7d7a863ca8209e67bb5b8ba5d16b44414916749c2ec89842",
+      "train.uint16": "3d2cb1ef62499f10c1e65b17d5afceb2a9ada2333c0e77eb063da6718b572cb1",
+      "validation.offsets.npy": "1f657c4010f5579cae53856161b4868602b73b00aa2b4b6bea79e8dc3d52d194",
+      "validation.uint16": "107771a8dbbe3b2899645a2b438757f45c9eea72c130da17386264f325c35f07"
+    },
+    "audit_samples_sha256": "626e254a5f3b4cef4e6d3787ad1f99b5f3114f85627ab4eece54737e0bbff3b9",
+    "checks": [
+      "sha256",
+      "source_scan_coverage",
+      "strict_chinese",
+      "known_extraction_artifacts",
+      "binary_pixels",
+      "full_glyph_rerender",
+      "canonical_inventory",
+      "control_frames",
+      "glyph_collisions",
+      "sequence_alignment",
+      "page_split",
+      "exact_dedup",
+      "punctuation_variant_dedup",
+      "source_file_provenance",
+      "independent_counts"
+    ],
+    "near_duplicate_note": "Sampled audit; preprocessing deduplication is approximate.",
+    "splits": {
+      "train": {
+        "paragraphs": 897245,
+        "source_pages": 296257,
+        "han_characters": 85236554,
+        "grid_tokens_including_bos_eos": 96557521
+      },
+      "validation": {
+        "paragraphs": 9162,
+        "source_pages": 3047,
+        "han_characters": 875491,
+        "grid_tokens_including_bos_eos": 988590
+      },
+      "test": {
+        "paragraphs": 9341,
+        "source_pages": 2996,
+        "han_characters": 897588,
+        "grid_tokens_including_bos_eos": 1015363
+      }
+    },
+    "glyph_shape": [
+      11923,
+      32,
+      32
+    ],
+    "leakage_audit": {
+      "method": "seeded heldout sample; exact Han five-gram Jaccard against all train paragraphs",
+      "scope": "sampled paragraphs only; no full-heldout or semantic contamination claim",
+      "sampled_heldout_paragraphs": 64,
+      "training_paragraphs_scanned": 897245,
+      "jaccard_threshold": 0.9,
+      "flagged_heldout_paragraphs": 0
+    }
+  },
+  "controls": {
+    "0": "PAD",
+    "1": "BOS",
+    "2": "EOS",
+    "3": "NEWLINE"
+  },
+  "supplemental_environment": {
+    "observed_at": "2026-09-08T06:35:59.320970+00:00",
+    "python": "3.12.13",
+    "nvidia_driver": "535.183.01",
+    "gpu": "Tesla V100S-PCIE-32GB",
+    "physical_gpu_index": 0,
+    "gpu_memory_mib": 32768,
+    "note": "Read-only observation during report preparation; not fields from the original training metadata."
+  },
+  "plotting_environment": {
+    "matplotlib": "3.10.8",
+    "numpy": "2.5.2",
+    "command": "uv run --frozen --no-sync --with matplotlib==3.10.8 python"
+  },
+  "artifact_scope": "Aggregate metadata only; no corpus text, glyph inventory, bitmaps, or model parameters."
+}

@@ -19,6 +19,9 @@ GPU 0 上从头训练、断点恢复与完整评估的固定实验协议见
 首轮二值模型的生成问题分析、相关论文与下一轮改进实验方案见
 [`BINARY_GLYPH_GENERATION_RESEARCH.md`](BINARY_GLYPH_GENERATION_RESEARCH.md)。
 
+以完整中文句子为目标的混合像素头、条件对抗微调和原图反馈诊断协议见
+[`BINARY_GPT_V2_EXPERIMENT.md`](BINARY_GPT_V2_EXPERIMENT.md)。
+
 ## 功能
 
 - 左右分栏的输入与预览界面

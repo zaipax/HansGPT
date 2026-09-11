@@ -10,14 +10,18 @@ from hansgpt_research.train_structured_glyph_lm import effective_config
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--round", required=True)
+parser.add_argument("--profile", choices=("r1", "r2"), default="r1")
 args = parser.parse_args()
+suffix = "_r2" if args.profile == "r2" else ""
 commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 identities = []
 for variant in "abc":
     directory = Path("artifacts/logs") / f"{args.round}_{variant}_smoke"
     receipt = json.loads((directory / "training_complete.json").read_text())
     metadata = json.loads((directory / "metadata.json").read_text())
-    config = json.loads(Path(f"configs/experiments/hansgpt_attention_{variant}.json").read_text())
+    config = json.loads(
+        Path(f"configs/experiments/hansgpt_attention_{variant}{suffix}.json").read_text()
+    )
     expected = effective_config(config, mode="smoke", smoke_tokens=4096)
     if (
         receipt["status"] != "complete"

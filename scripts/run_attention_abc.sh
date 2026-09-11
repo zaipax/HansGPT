@@ -14,11 +14,13 @@ data=/root/HansGPT/data/processed/modelscope_zhwiki_full_v1
 if [[ "$stage" == worker ]]; then
     variant=${3:?variant}
     mode=${4:?mode}
+    profile=${5:-r1}
+    case "$profile" in r1) suffix=;; r2) suffix=_r2;; *) exit 2;; esac
     case "$variant" in a) gpu=4;; b) gpu=5;; c) gpu=6;; *) exit 2;; esac
     [[ "$mode" == full || "$mode" == smoke ]] || exit 2
     export CUDA_VISIBLE_DEVICES="$gpu"
     if uv run --frozen python -m hansgpt_research.train_attention_glyph_lm \
-        --config "configs/experiments/hansgpt_attention_${variant}.json" \
+        --config "configs/experiments/hansgpt_attention_${variant}${suffix}.json" \
         --data "$data" --run-name "$round" --mode "$mode"; then
         printf '0\n' > "artifacts/logs/${round}.exit_code"
     else
@@ -30,6 +32,8 @@ if [[ "$stage" == worker ]]; then
 fi
 
 [[ "$stage" == smoke || "$stage" == full ]] || exit 2
+profile=${3:-r1}
+case "$profile" in r1) suffix=;; r2) suffix=_r2;; *) exit 2;; esac
 command -v tmux >/dev/null
 mkdir -p artifacts/logs
 # Check all three assignments before starting any job.
@@ -45,12 +49,12 @@ for variant in a b c; do
     [[ "$used" -lt 100 ]] || { echo "GPU $gpu is occupied"; exit 2; }
 done
 if [[ "$stage" == full ]]; then
-    uv run --frozen python scripts/verify_attention_smokes.py --round "$round"
+    uv run --frozen python scripts/verify_attention_smokes.py --round "$round" --profile "$profile"
 fi
 for variant in a b c; do
     run="${round}_${variant}"
     [[ "$stage" == smoke ]] && run="${run}_smoke"
     tmux new-session -d -s "$run" \
-        "bash scripts/run_attention_abc.sh worker $run $variant $stage >artifacts/logs/${run}.console.log 2>&1"
+        "bash scripts/run_attention_abc.sh worker $run $variant $stage $profile >artifacts/logs/${run}.console.log 2>&1"
     echo "Started $run"
 done

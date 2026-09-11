@@ -134,7 +134,7 @@ def main():
         "gpu": torch.cuda.get_device_name(device),
         "sample_indices": indices.tolist(),
         "torch_threads": torch.get_num_threads(),
-        "scope": "32 real full-length chunks; transfers/backward/optimizer; no loader or checkpoints",
+        "scope": "32 real chunks; includes transfer/backward/update, excludes loading/saving",
         "cases": [],
     }
     for case in cases:

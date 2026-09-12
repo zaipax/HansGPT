@@ -272,6 +272,28 @@ def worker(task):
     )
 
 
+def replay_or_reuse(task):
+    """Reuse only pinned candidates; all intervals still undergo raw verification."""
+    reuse = SETTINGS.get("reuse")
+    if reuse:
+        source = Path(reuse) / (task["id"] + ".parquet")
+        if source.exists():
+            try:
+                count = pq.read_metadata(source).num_rows
+            except pa.ArrowInvalid:
+                return worker(task)  # Interrupted writes have no valid footer.
+            if count:
+                target = Path(SETTINGS["interim"]) / source.name
+                shutil.copyfile(source, target)
+                return dict(
+                    task=task["id"],
+                    records=count,
+                    stats={"reused_candidate_tasks": 1},
+                    sha256=sha(target),
+                )
+    return worker(task)
+
+
 def verify_candidates(task):
     """Re-read source rows and check physical interval independently of exporter."""
     cfg = SETTINGS
@@ -471,6 +493,7 @@ def main():
     p.add_argument("--interim", type=Path, required=True)
     p.add_argument("--workers", type=int, default=24)
     p.add_argument("--smoke", action="store_true")
+    p.add_argument("--reuse-candidates", type=Path)
     args = p.parse_args()
     if not 1 <= args.workers <= 64:
         raise ValueError("Invalid worker count")
@@ -497,6 +520,7 @@ def main():
     files = json.loads(Path("configs/datasets/chinese_multidomain_v1.json").read_text())["files"]
     inventory = json.loads((parent / "glyph_inventory.json").read_text())
     SETTINGS = dict(
+        reuse=str(args.reuse_candidates) if args.reuse_candidates else None,
         workers=args.workers,
         smoke=args.smoke,
         parent=str(parent),
@@ -521,6 +545,22 @@ def main():
     with ThreadPoolExecutor(max_workers=8) as pool:
         if not all(pool.map(lambda pair: sha(pair[0]) == pair[1], checks)):
             raise ValueError("Input hash mismatch")
+    reuse_identity = None
+    if args.reuse_candidates:
+        reuse_identity = json.loads((args.reuse_candidates / "cache_identity.json").read_text())
+        producer = subprocess.check_output(["git", "rev-parse", "30a0e89"], text=True).strip()
+        producer_script = subprocess.check_output(
+            ["git", "show", f"{producer}:scripts/prepare_document_corpus.py"]
+        )
+        expected = dict(
+            producer_commit=producer,
+            script_sha256=hashlib.sha256(producer_script).hexdigest(),
+            source_config_sha256=sha("configs/datasets/chinese_multidomain_v1.json"),
+            parent_manifest_sha256=sha(parent / "manifest.json"),
+            exclusion_db_sha256=sha("data/interim/chinese_multidomain_v1/records.sqlite"),
+        )
+        if reuse_identity != expected:
+            raise ValueError("Candidate reuse identity mismatch")
     phase("build_heldout_exclusions")
     HELD = NearIndex()
     db = Path("data/interim/chinese_multidomain_v1/records.sqlite").resolve()
@@ -540,7 +580,7 @@ def main():
     # Fork immutable in-memory held-out indexes; avoid copying them to 24 workers.
     pa.set_cpu_count(1)
     with ProcessPoolExecutor(max_workers=args.workers, mp_context=mp.get_context("fork")) as pool:
-        for i, result in enumerate(pool.map(worker, tasks)):
+        for i, result in enumerate(pool.map(replay_or_reuse, tasks)):
             results.append(result)
             if i % 25 == 0:
                 print(json.dumps(dict(completed=i + 1, tasks=len(tasks))), flush=True)
@@ -559,6 +599,8 @@ def main():
         parent_manifest_sha256=sha(parent / "manifest.json"),
         source_config_sha256=sha("configs/datasets/chinese_multidomain_v1.json"),
         workers=args.workers,
+        reused_candidate_identity=reuse_identity,
+        cleaning_counter_scope="recomputed tasks only; reused tasks lack original cleaning counters",
         elapsed_seconds=time.monotonic() - started,
         verified_raw_segments=verified,
         export=export_stats,

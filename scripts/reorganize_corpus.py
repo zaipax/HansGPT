@@ -591,7 +591,7 @@ def pool_map(function, tasks, args, folder=None):
                 atomic_json(
                     args.interim / "status.json",
                     {
-                        "phase": function.__name__,
+                        "phase": f"benchmark_{args.workers}" if folder else function.__name__,
                         "completed": len(output),
                         "tasks": len(tasks),
                         "workers": args.workers,

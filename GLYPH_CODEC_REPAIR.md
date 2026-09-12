@@ -70,3 +70,44 @@ The splits, gates, optimizer and maximum update budgets stay the same.
 
 Interface version denotes a shape/format, not interchangeable learned coordinates.
 Any future semantic alignment must pin the exact selected codec checkpoint hash.
+
+## Completed reconstruction results
+
+The four-slot candidates failed readiness: selected fixed-encoder audit mean
+Hamming error was 193.38 pixels; four-query audit error was 34.13, both with zero
+exact audit glyphs. The sixteen-query candidate passed: at its selected step
+15000, train exact match was 10707/10707, validation 594/595, audit 591/594.
+
+Reserved control tiles were excluded from that reconstruction corpus, and EOS
+initially had 138 wrong pixels. `adapt_codec_controls.py` freezes the successful
+encoder and trains only its decoder with 224 replayed training glyphs plus eight
+copies of each of four control tiles per batch, LR 3e-5. After 500 updates all four
+controls are exact, train remains 100%, validation is 589/595, audit is 592/594.
+The resulting immutable codec SHA-256 is
+`5882dfa7b73304b9f6cfb2fdae64eae2cce1209925d7884370a823cec1c76606`.
+
+## Semantic alignment pilot
+
+`fit_codec_semantics.py` starts from r1 and that exact control-ready codec. It
+freezes the original GPT input encoder, original GPT backbone, and entire codec.
+Only the existing semantic decoder, permanent 1024-to-4096 mapping and per-slot
+normalization train. No new encoder silently replaces the old GPT input encoder.
+
+The one-million-target pilot uses the same Wikipedia corpus, ctx 256, batch 32,
+FP16, a 50K-target warmup to LR 1e-4 followed by cosine decay to 3e-5. Its loss is
+pixel NLL plus 0.05 times in-batch latent contrastive loss at temperature 0.1.
+Detached target-codec features are supervision only; bitmap aliases/repetitions
+are multiple positives. No vocabulary lookup or gallery correction enters
+inference. This adds an alignment objective, so it is not a loss-matched causal
+comparison to r1. It is also not a guarantee that next-character ambiguity is solved.
+
+Run a smoke first, then the pilot on GPU5:
+
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=5 uv run --frozen python scripts/fit_codec_semantics.py --smoke
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=5 uv run --frozen python scripts/fit_codec_semantics.py
+```
+
+Full-test likelihood, paired glyph metrics, wrong-context controls and 32 raw
+continuations are saved automatically. The glyph repair is distinct from achieving
+fluent language generation; only those downstream measurements assess the latter.

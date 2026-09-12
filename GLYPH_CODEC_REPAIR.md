@@ -111,3 +111,23 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=5 uv run --frozen python scrip
 Full-test likelihood, paired glyph metrics, wrong-context controls and 32 raw
 continuations are saved automatically. The glyph repair is distinct from achieving
 fluent language generation; only those downstream measurements assess the latter.
+
+## Semantic pilot outcome and limits
+
+The pilot completed 1,001,324 valid targets (299 updates, zero AMP overflows).
+Full-test NLL was 0.33429 versus r1's 0.31883. Paired foreground F1 was 0.15385
+and exact next-target bitmap match was zero. Across 32 independent prompts,
+4096 body grids contained no exact content glyphs and no EOS termination.
+The semantic pilot therefore did not restore readable generation.
+
+A post-training tensor-by-tensor check verified all 274 original input-encoder/GPT
+tensors and all 139 codec tensors were unchanged. The failed language result is
+not another accidental replacement or update of the frozen glyph interface.
+The permanent codec/mapping contracts, readiness gates and reconstruction repair
+are implemented and tested; fluent speaking remains unresolved. More alignment
+training versus a different conditional output distribution needs a separate
+controlled experiment. A successful deterministic glyph codec does not itself
+model multiple plausible next characters.
+
+Final artifacts are under `artifacts/reports/codec_semantic_alignment_v1/`;
+`frozen_weights_verified.json` records the real-checkpoint immutability check.

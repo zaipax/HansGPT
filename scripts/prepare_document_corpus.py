@@ -235,6 +235,7 @@ def export(cfg, tasks, output):
     original = Path(cfg["original"])
     removed = np.zeros(len(np.load(original / "train.offsets.npy")) - 1, dtype=bool)
     accepted = []
+    covered_lines = defaultdict(set)
     dedup = NearIndex()
     stats = Counter()
     # Process in source order, independent of worker completion order.
@@ -254,6 +255,10 @@ def export(cfg, tasks, output):
                 dedup.add(text)
             removed[group[0]["parent_indices"]] = True
             accepted.extend(group)
+            for record in group:
+                covered_lines[record["source_page_id"]].update(
+                    hashlib.sha256(line.encode()).digest() for line in record["text"].splitlines()
+                )
             stats["replaced_source_rows"] += 1
     np.save(output / "replaced_parent_indices.npy", np.flatnonzero(removed))
     stats["replaced_parent_paragraphs"] = int(removed.sum())
@@ -298,6 +303,12 @@ def export(cfg, tasks, output):
                 if mask.any():
                     if not mask.all():
                         raise ValueError("Partial source-row replacement")
+                    if any(
+                        hashlib.sha256(line.encode()).digest()
+                        not in covered_lines[r["source_page_id"]]
+                        for line in r["text"].splitlines()
+                    ):
+                        raise ValueError("Independent parent coverage check failed")
                     stats["replaced_v2_runs"] += 1
                     continue
                 emit(
@@ -306,6 +317,8 @@ def export(cfg, tasks, output):
                     r["source_family"],
                     dict(kind="v2", parent_start=r["parent_start"], parent_count=r["parent_count"]),
                 )
+            if cfg["smoke"]:
+                break
         for r in accepted:
             emit(
                 r["text"],
@@ -319,8 +332,6 @@ def export(cfg, tasks, output):
                     last_line=r["last_line"],
                 ),
             )
-            if cfg["smoke"]:
-                break
         if buf:
             writer.write_table(pa.Table.from_pylist(buf, schema=schema))
     np.save(output / "train.offsets.npy", np.asarray(offsets, dtype=np.int64))
@@ -415,6 +426,11 @@ def main():
     if not receipt["passed"] or receipt["manifest_sha256"] != sha(parent / "manifest.json"):
         raise ValueError("Parent identity mismatch")
     checks = [(parent / name, value) for name, value in receipt["model_consumed_sha256"].items()]
+    parent_manifest = json.loads((parent / "manifest.json").read_text())
+    checks.extend(
+        (parent / f"{split}.parquet", parent_manifest["output_sha256"][f"{split}.parquet"])
+        for split in ("train", "validation", "test")
+    )
     checks += [(LEGACY["raw_path"](Path(SETTINGS["raw"]), s), s["sha256"]) for s in files]
     with ThreadPoolExecutor(max_workers=8) as pool:
         if not all(pool.map(lambda pair: sha(pair[0]) == pair[1], checks)):

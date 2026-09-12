@@ -15,6 +15,7 @@ from hansgpt_research.conditional_glyph_vae import (
     gaussian_kl,
     sample_gaussian,
 )
+from hansgpt_research.cvae_training_optimization import make_head_kernel, optimized_backward
 from hansgpt_research.glyph_lm import collate_glyph_sequences
 from hansgpt_research.packed_glyph_data import PackedGlyphSequenceDataset
 from hansgpt_research.train_glyph_lm import move_batch, runtime_metadata, write_json
@@ -27,8 +28,12 @@ def main():
     parser.add_argument("--head-chunk-size", type=int, default=128)
     parser.add_argument("--gpu", type=int, default=7)
     parser.add_argument("--steps", type=int, default=4)
+    parser.add_argument("--optimized", action="store_true")
+    parser.add_argument("--compile-head", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.compile_head and not args.optimized:
+        raise ValueError("--compile-head requires --optimized")
     if min(args.batch_size, args.head_chunk_size) <= 0 or args.steps < 3:
         raise ValueError("Positive batch/head sizes and at least three successful steps required")
     if (
@@ -46,6 +51,11 @@ def main():
         manifest_sha256="9962a55afc778caf74ef12a24fe017e594c2a683729738e68bce364ab11298a9",
     )
     cfg = config["training"]
+    cfg.update(
+        optimized_backward=args.optimized,
+        compile_head=args.compile_head,
+        fused_adamw=args.optimized,
+    )
     cfg.update(
         sequence_length=1024,
         packing="eos_causal",
@@ -76,8 +86,10 @@ def main():
         result["trainable_parameters"] = sum(
             p.numel() for p in model.parameters() if p.requires_grad
         )
+        result.update(optimized_backward=args.optimized, compile_head=args.compile_head)
         optimizer = optimizer_for(model, cfg)
         scaler = torch.amp.GradScaler("cuda")
+        kernel = make_head_kernel(model, compiled=args.compile_head) if args.optimized else None
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         successes = attempts = 0
@@ -94,32 +106,37 @@ def main():
             with torch.autocast("cuda", dtype=torch.float16):
                 hidden = model.forward_hidden(batch["glyphs"], batch["attention_mask"])[mask]
             targets = batch["targets"][mask]
-            leaf = hidden.detach().requires_grad_(True)
-            bce_sum = kl_sum = 0.0
-            for start in range(0, total, args.head_chunk_size):
-                h = leaf[start : start + args.head_chunk_size]
-                y = targets[start : start + len(h)]
-                with torch.autocast("cuda", dtype=torch.float16):
-                    pm, pl = model.prior(h)
-                    qm, ql = model.posterior(h, y)
-                    logits = model.decode(h, sample_gaussian(qm, ql))
-                    rec = (
-                        F.binary_cross_entropy_with_logits(
-                            logits.float(), y.float(), reduction="none"
+            if kernel is not None:
+                bce_sum, kl_sum = optimized_backward(
+                    model, hidden, targets, scaler, args.head_chunk_size, 1.0, kernel
+                )
+            else:
+                leaf = hidden.detach().requires_grad_(True)
+                bce_sum = kl_sum = 0.0
+                for start in range(0, total, args.head_chunk_size):
+                    h = leaf[start : start + args.head_chunk_size]
+                    y = targets[start : start + len(h)]
+                    with torch.autocast("cuda", dtype=torch.float16):
+                        pm, pl = model.prior(h)
+                        qm, ql = model.posterior(h, y)
+                        logits = model.decode(h, sample_gaussian(qm, ql))
+                        rec = (
+                            F.binary_cross_entropy_with_logits(
+                                logits.float(), y.float(), reduction="none"
+                            )
+                            .flatten(1)
+                            .sum(1)
                         )
-                        .flatten(1)
-                        .sum(1)
-                    )
-                    kl = gaussian_kl(qm, ql, pm, pl)
-                    loss = (rec + kl).sum() / (total * 1024)
-                if not bool(torch.isfinite(loss)):
-                    raise FloatingPointError("Nonfinite CVAE loss")
-                scaler.scale(loss).backward()
-                bce_sum += float(rec.detach().sum())
-                kl_sum += float(kl.detach().sum())
-            if leaf.grad is None:
-                raise RuntimeError("Missing context gradient")
-            hidden.backward(leaf.grad)
+                        kl = gaussian_kl(qm, ql, pm, pl)
+                        loss = (rec + kl).sum() / (total * 1024)
+                    if not bool(torch.isfinite(loss)):
+                        raise FloatingPointError("Nonfinite CVAE loss")
+                    scaler.scale(loss).backward()
+                    bce_sum += float(rec.detach().sum())
+                    kl_sum += float(kl.detach().sum())
+                if leaf.grad is None:
+                    raise RuntimeError("Missing context gradient")
+                hidden.backward(leaf.grad)
             update = complete_optimizer_step(
                 optimizer, scaler, model.parameters(), cfg["max_grad_norm"]
             )

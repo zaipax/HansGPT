@@ -21,6 +21,7 @@ from hansgpt_research.conditional_glyph_vae import (
     gaussian_log_prob,
     sample_gaussian,
 )
+from hansgpt_research.cvae_training_optimization import make_head_kernel, optimized_backward
 from hansgpt_research.glyph_lm import GlyphSequenceDataset, collate_glyph_sequences
 from hansgpt_research.glyph_readability import analyze_readability
 from hansgpt_research.packed_glyph_data import PackedGlyphSequenceDataset
@@ -381,6 +382,11 @@ def main():
             han_lookup[int(index)] = True
     optimizer = optimizer_for(model, cfg)
     scaler = torch.amp.GradScaler("cuda")
+    head_kernel = (
+        make_head_kernel(model, compiled=cfg.get("compile_head", False))
+        if cfg.get("optimized_backward", False)
+        else None
+    )
     progress = dict(
         epoch=0,
         cursor=0,
@@ -467,33 +473,38 @@ def main():
                 with torch.autocast("cuda", dtype=torch.float16):
                     hidden = model.forward_hidden(batch["glyphs"], batch["attention_mask"])[mask]
                 targets = batch["targets"][mask]
-                leaf = hidden.detach().requires_grad_(True)
-                recon_sum = kl_sum = 0.0
-                for start in range(0, total, cfg["head_chunk_size"]):
-                    h = leaf[start : start + cfg["head_chunk_size"]]
-                    y = targets[start : start + len(h)]
-                    with torch.autocast("cuda", dtype=torch.float16):
-                        pm, pl = model.prior(h)
-                        qm, ql = model.posterior(h, y)
-                        z = sample_gaussian(qm, ql)
-                        logits = model.decode(h, z)
-                        rec = (
-                            F.binary_cross_entropy_with_logits(
-                                logits.float(), y.float(), reduction="none"
+                if head_kernel is not None:
+                    recon_sum, kl_sum = optimized_backward(
+                        model, hidden, targets, scaler, cfg["head_chunk_size"], beta, head_kernel
+                    )
+                else:
+                    leaf = hidden.detach().requires_grad_(True)
+                    recon_sum = kl_sum = 0.0
+                    for start in range(0, total, cfg["head_chunk_size"]):
+                        h = leaf[start : start + cfg["head_chunk_size"]]
+                        y = targets[start : start + len(h)]
+                        with torch.autocast("cuda", dtype=torch.float16):
+                            pm, pl = model.prior(h)
+                            qm, ql = model.posterior(h, y)
+                            z = sample_gaussian(qm, ql)
+                            logits = model.decode(h, z)
+                            rec = (
+                                F.binary_cross_entropy_with_logits(
+                                    logits.float(), y.float(), reduction="none"
+                                )
+                                .flatten(1)
+                                .sum(1)
                             )
-                            .flatten(1)
-                            .sum(1)
-                        )
-                        kl = gaussian_kl(qm, ql, pm, pl)
-                        loss = (rec + beta * kl).sum() / (total * 1024)
-                    if not bool(torch.isfinite(loss)):
-                        raise FloatingPointError("Nonfinite CVAE loss")
-                    scaler.scale(loss).backward()
-                    recon_sum += float(rec.detach().sum())
-                    kl_sum += float(kl.detach().sum())
-                if leaf.grad is None:
-                    raise RuntimeError("Missing context gradient")
-                hidden.backward(leaf.grad)
+                            kl = gaussian_kl(qm, ql, pm, pl)
+                            loss = (rec + beta * kl).sum() / (total * 1024)
+                        if not bool(torch.isfinite(loss)):
+                            raise FloatingPointError("Nonfinite CVAE loss")
+                        scaler.scale(loss).backward()
+                        recon_sum += float(rec.detach().sum())
+                        kl_sum += float(kl.detach().sum())
+                    if leaf.grad is None:
+                        raise RuntimeError("Missing context gradient")
+                    hidden.backward(leaf.grad)
                 update = complete_optimizer_step(
                     optimizer, scaler, model.parameters(), cfg["max_grad_norm"]
                 )

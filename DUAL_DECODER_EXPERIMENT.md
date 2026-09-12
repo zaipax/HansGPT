@@ -58,4 +58,6 @@ Logs/arrays: `artifacts/logs/<run>/`. Checkpoints: `artifacts/checkpoints/<run>/
 The hourly checker `scripts/check_glyph_run.py --run-name <run> --gpu 5` records
 progress, throughput, losses and failed/missing processes, without restarting jobs
 or sending messages. Training completion is established by the server receipt,
-not by this protocol. An independent final evaluation remains necessary.
+not by this protocol. After successful full training, the same worker runs full-test
+likelihood scoring and the fixed 32-page raw-generation evaluation on GPU5, writing
+an independent evaluation receipt under `artifacts/reports/<run>_evaluation/`.

@@ -16,6 +16,7 @@ from hansgpt_research.train_glyph_lm import sequence_lengths, verify_data_readin
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--steps", type=int, default=3)
+parser.add_argument("--only", nargs="*")
 args = parser.parse_args()
 if args.output.exists() or args.steps < 1:
     raise ValueError("Use a fresh output and a positive measurement count")
@@ -37,6 +38,8 @@ if len(samples) != 64:
     raise ValueError("Need 64 real full-length chunks")
 run_case = runpy.run_path(str(Path(__file__).with_name("benchmark_attention_abc.py")))["run_case"]
 cases = [
+    {"name": "batch32_head1024", "batch_size": 32, "head_chunk_size": 1024, "checkpointing": False},
+    {"name": "batch32_head2048", "batch_size": 32, "head_chunk_size": 2048, "checkpointing": False},
     {"name": "batch16_head128", "batch_size": 16, "head_chunk_size": 128, "checkpointing": False},
     {"name": "batch32_head128", "batch_size": 32, "head_chunk_size": 128, "checkpointing": False},
     {"name": "batch32_head256", "batch_size": 32, "head_chunk_size": 256, "checkpointing": False},
@@ -74,6 +77,8 @@ report = {
     "cases": [],
 }
 for case in cases:
+    if args.only and case["name"] not in args.only:
+        continue
     try:
         result = run_case(config, samples, case, device, args.steps)
     except torch.OutOfMemoryError:

@@ -5,9 +5,29 @@ export PATH="/root/.local/bin:$PATH"
 export CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=5
 mode=${1:?smoke or full}
 round=${2:?round name}
-[[ "$mode" == smoke || "$mode" == full ]] || exit 2
 [[ "$round" =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
 [[ -z "$(git status --porcelain)" && "$(git branch --show-current)" == main ]] || exit 2
+if [[ "$mode" == worker ]]; then
+  mode=${3:?training mode}
+  [[ "$mode" == smoke || "$mode" == full ]] || exit 2
+  if uv run --frozen python -m hansgpt_research.train_attention_glyph_lm \
+      --config configs/experiments/hansgpt_dual_decoder.json \
+      --data data/processed/modelscope_zhwiki_full_v1 --run-name "$round" \
+      --mode "$mode" --smoke-tokens 32768; then
+    printf '0\n' > "artifacts/logs/$round.exit_code"
+  else
+    code=$?
+    printf '%s\n' "$code" > "artifacts/logs/$round.exit_code"
+    exit "$code"
+  fi
+  if [[ "$mode" == full ]]; then
+    uv run --frozen python scripts/evaluate_attention_abc.py --variant D --run-name "$round" \
+      --output "artifacts/reports/${round}_evaluation" \
+      >"artifacts/logs/${round}_evaluation.log" 2>&1
+  fi
+  exit 0
+fi
+[[ "$mode" == smoke || "$mode" == full ]] || exit 2
 command -v tmux >/dev/null
 run="$round"
 [[ "$mode" == smoke ]] && run="${round}_smoke"
@@ -35,5 +55,5 @@ PY
 fi
 mkdir -p artifacts/logs
 tmux new-session -d -s "$run" \
-  "cd /root/HansGPT && CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=5 /root/.local/bin/uv run --frozen python -m hansgpt_research.train_attention_glyph_lm --config configs/experiments/hansgpt_dual_decoder.json --data data/processed/modelscope_zhwiki_full_v1 --run-name $run --mode $mode --smoke-tokens 32768 >artifacts/logs/$run.console.log 2>&1; code=\$?; printf '%s\\n' \"\$code\" >artifacts/logs/$run.exit_code"
+  "bash scripts/run_dual_decoder.sh worker $run $mode >artifacts/logs/$run.console.log 2>&1"
 echo "Started $run on physical GPU5"

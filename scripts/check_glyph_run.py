@@ -35,6 +35,8 @@ gpu = subprocess.run(
     check=False,
 )
 report.update(gpu=gpu.stdout.strip().splitlines(), gpu_query_exit_code=gpu.returncode)
+evaluation = root / "artifacts/reports" / (args.run_name + "_evaluation")
+report["evaluation_complete"] = (evaluation / "evaluation_complete.json").is_file()
 temporary = output / "latest.tmp"
 temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 temporary.replace(output / "latest.json")

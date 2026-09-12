@@ -12,11 +12,10 @@ import pyarrow.parquet as pq
 import torch
 from PIL import Image, ImageDraw
 
-from hansgpt_research.attention_glyph_lm import AttentionGlyphGPT
 from hansgpt_research.diagnose_glyph_generation import repetition_metrics
 from hansgpt_research.evaluate_structured_glyph_lm import SplitAccumulator
-from hansgpt_research.glyph_lm import GlyphSequenceDataset, ModelConfig
-from hansgpt_research.train_attention_glyph_lm import check_gpu, validate_nll
+from hansgpt_research.glyph_lm import GlyphSequenceDataset
+from hansgpt_research.train_attention_glyph_lm import check_gpu, model_from_config, validate_nll
 from hansgpt_research.train_glyph_lm import autocast_context, runtime_metadata, sha256, write_json
 
 
@@ -161,14 +160,19 @@ def draw_samples(path, prompts, generated, title):
 @torch.inference_mode()
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--variant", choices=list("ABC"), required=True)
+    parser.add_argument("--variant", choices=list("ABCD"), required=True)
+    parser.add_argument("--run-name")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     device = torch.device("cuda:0")
     check_gpu(args.variant, device)
     if args.output.exists():
         raise FileExistsError("Evaluation output must be fresh")
-    name = "hansgpt_abc_r2_" + args.variant.lower()
+    name = args.run_name or (
+        "hansgpt_dual_r1" if args.variant == "D" else "hansgpt_abc_r2_" + args.variant.lower()
+    )
+    if not name.replace("_", "").replace("-", "").isalnum():
+        raise ValueError("Invalid training run name")
     logs = Path("artifacts/logs") / name
     receipt = json.loads((logs / "training_complete.json").read_text())
     checkpoint = Path("artifacts/checkpoints") / name / "best.pt"
@@ -187,16 +191,9 @@ def main():
     for key in ("data_manifest_sha256", "data_sha256", "data_verification_sha256"):
         if evaluation_metadata[key] != metadata[key]:
             raise ValueError(f"Evaluation data mismatch: {key}")
-    model = (
-        AttentionGlyphGPT(
-            ModelConfig.from_dict(config["model"]),
-            args.variant,
-            config["encoder"],
-            config["decoder"],
-        )
-        .to(device)
-        .eval()
-    )
+    if config["variant"] != args.variant:
+        raise ValueError("Checkpoint variant differs from requested GPU/model")
+    model = model_from_config(config).to(device).eval()
     model.load_state_dict(saved["model"], strict=True)
     del saved
     dataset = GlyphSequenceDataset(data, "test", cfg["sequence_length"])

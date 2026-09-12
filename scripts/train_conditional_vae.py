@@ -23,6 +23,7 @@ from hansgpt_research.conditional_glyph_vae import (
 )
 from hansgpt_research.glyph_lm import GlyphSequenceDataset, collate_glyph_sequences
 from hansgpt_research.glyph_readability import analyze_readability
+from hansgpt_research.packed_glyph_data import PackedGlyphSequenceDataset
 from hansgpt_research.train_glyph_lm import (
     SortishEpochSampler,
     learning_rate,
@@ -332,7 +333,11 @@ def main():
         budget="successful Han next-glyph targets; punctuation/EOS trained and counted separately",
     )
     write_json(output / "metadata.json", metadata)
-    dataset = GlyphSequenceDataset(config["data"], "train", cfg["sequence_length"])
+    packing = cfg.get("packing", "document_isolated")
+    if packing not in {"document_isolated", "eos_causal"}:
+        raise ValueError("Unsupported packing policy")
+    dataset_class = PackedGlyphSequenceDataset if packing == "eos_causal" else GlyphSequenceDataset
+    dataset = dataset_class(config["data"], "train", cfg["sequence_length"])
     if args.mode == "toy":
         toy(model, dataset, output, args.toy_steps)
         return

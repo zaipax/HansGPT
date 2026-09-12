@@ -137,12 +137,24 @@ def runtime_metadata(
     if not branch:
         raise RuntimeError("Do not run experiments from detached HEAD")
     requirements = config.get("data_requirements", {})
+    corpus_type = requirements.get("corpus_type")
+    if corpus_type not in (None, "chinese_document_packed_v3"):
+        raise ValueError("Unsupported explicit corpus type")
     readiness = verify_data_readiness(
         data_dir,
-        require_full_snapshot=mode == "full",
+        require_full_snapshot=mode == "full" and corpus_type is None,
         expected_provider=requirements.get("full_source_provider", "ModelScope"),
         expected_shards=requirements.get("full_source_shards", 6),
     )
+    if corpus_type is not None:
+        expected_hash = requirements.get("manifest_sha256")
+        if (
+            readiness["manifest"].get("type") != corpus_type
+            or readiness["manifest"].get("mode") != "full"
+            or not expected_hash
+            or readiness["manifest_sha256"] != expected_hash
+        ):
+            raise ValueError("New corpus requires its exact verified full manifest hash")
     manifests = {
         "manifest.json": {"sha256": readiness["manifest_sha256"], "content": readiness["manifest"]},
         "verification.json": {
@@ -220,6 +232,8 @@ class EpochSampler(Sampler[int]):
 
 def sequence_lengths(dataset: GlyphSequenceDataset) -> np.ndarray:
     """Derive every chunk's valid length without reading or rendering any pixels."""
+    if hasattr(dataset, "effective_lengths"):
+        return dataset.effective_lengths()
     lengths = np.full(len(dataset), dataset.sequence_length, dtype=np.int32)
     final_indices = dataset.chunk_offsets[1:] - 1
     lengths[final_indices] = (np.diff(dataset.offsets) - 2) % dataset.sequence_length + 1

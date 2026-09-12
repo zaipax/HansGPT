@@ -43,7 +43,7 @@ redistribute all underlying texts. No raw corpus is committed to Git.
   formatting, but no rejected answer/question fragment is spliced into another.
   Markdown heading/bold markers and punctuation-adjacent whitespace are formatting
   only; their Chinese content is retained. Digits or Latin content still reject
-  the entire pair. The current smoke version is `chinese_multidomain_smoke_v3`.
+  the entire pair. The current smoke version is `chinese_multidomain_smoke_v4`.
 - Template-prompted encyclopedia articles (MBA, medical entries and agriculture)
   use a separate article adapter. Each passing complete paragraph is exported
   with its original Chinese topic and explicit `资料摘录：` marker. Rejected
@@ -86,11 +86,27 @@ bash scripts/run_multidomain_corpus.sh smoke
 nice -n 10 ionice -c 2 -n 7 bash scripts/run_multidomain_corpus.sh full
 ```
 
-Use tmux for the full job. It has four download threads, at most two Arrow threads,
-no visible GPUs and a 40GiB free-space reserve. Downloads resume owned `.part` files.
+Use tmux for the full job. It has four download threads, 24 cleaning processes
+(one Arrow thread per worker), no visible GPUs and a 40GiB free-space reserve.
+Downloads resume owned `.part` files. Worker tasks are bounded to two queued batches
+per worker, with 32 source rows per batch. Outputs are consumed in original source
+order, so process scheduling does not change the retained corpus or its splits.
+Workers perform normalization, filtering, glyph checks, labels, hashes and shingle
+anchors; one parent owns the global deduplication database. SQLite uses an on-demand
+8GiB cache, WAL/NORMAL transactions and an equivalent grouped-anchor query that
+avoids fetching record bodies before requiring two matching anchors. Differential
+tests compare decisions and counters with the original store. NORMAL preserves
+database consistency, though a host crash can lose recent commits; cursor and
+records roll back together and can be replayed from verified sources.
 Processing saves its source cursor and dedup/statistics state in one SQLite
 transaction. For interrupted preparation, rerun the preparation command with
 the same paths/configuration and `--resume`, then run the verifier separately.
+Worker/cache settings can change without changing data semantics. A code upgrade
+requires `--resume --upgrade-from-script-sha256 <exact previous script hash>`;
+all data identity fields must remain equal and the old/new identities are recorded
+in `code_history.json`. An exclusive lock prevents concurrent preparers using the
+same intermediate store. Already committed data is retained during the parallel
+upgrade; only uncommitted rows are replayed.
 
 | Server path | Contents |
 |---|---|

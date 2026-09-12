@@ -1,12 +1,19 @@
 """Pure-Chinese boundaries, complete QA pairs and transactional preparation state."""
 
-import runpy
+import importlib
+import json
+import multiprocessing as mp
+import random
+import sys
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from opencc import OpenCC
 
-helpers = runpy.run_path(str(Path(__file__).parents[1] / "scripts/prepare_multidomain_corpus.py"))
+sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
+corpus = importlib.import_module("prepare_multidomain_corpus")
+helpers = vars(corpus)
 
 
 def test_mixed_question_rejects_entire_pair_instead_of_retaining_answer():
@@ -108,3 +115,65 @@ def test_article_context_prefix_cannot_hide_duplicate_body(tmp_path):
     assert not store.add_with_body(second, body, Counter())
     assert list(store.records("train")) == [first]
     store.close()
+
+
+def test_optimized_global_near_dedup_matches_original_store(tmp_path):
+    from hansgpt_research.prepare_corpus import CorpusStore
+
+    old = CorpusStore(tmp_path / "old.sqlite")
+    new = corpus.ResumableStore(tmp_path / "new.sqlite", cache_mib=64)
+    rng = random.Random(519)
+    alphabet = "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏"
+    texts = [
+        "这是共同的开头，但是不同材料仍然需要分别检查。"
+        + "".join(rng.choices(alphabet, k=100))
+        + "。"
+        for _ in range(150)
+    ]
+    texts += [t[:-7] + "资料略有修改。" for t in texts[:30]]
+    texts += texts[::7]
+    left, right = Counter(), Counter()
+    for text in texts:
+        features = corpus.dedup_features(text, text)
+        record = {"text": text, "text_sha256": features["text_hash"], "split": "train"}
+        assert old.add(record, left) == new.add_with_body(record, text, right, features)
+    assert left == right
+    assert list(old.records("train")) == list(new.records("train"))
+    old.close()
+    new.close()
+
+
+def test_parallel_cleaning_keeps_original_row_order_and_content(tmp_path):
+
+    rows = [
+        {"text": "这是一段完整的中文说明文字，可以用于核对多进程清洗后的输出结果。"}
+        for _ in range(11)
+    ]
+    path = tmp_path / "input.jsonl"
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    spec = {
+        "adapter": "jsonl_text",
+        "family": "academic",
+        "domain_hint": "学术与科技",
+        "dataset": "test",
+        "path": "input.jsonl",
+        "revision": "test",
+    }
+    font = Path("data/raw/hansgpt_modelscope_wikipedia/20231101/NotoSansCJKsc-Regular.otf")
+    # Integration runs on the server where the pinned font already exists.
+    if not font.exists():
+        import pytest
+
+        pytest.skip("Server font required for spawned-process integration")
+    corpus.init_clean_worker(str(font))
+    expected = corpus.clean_batch((0, spec, list(enumerate(rows))))
+    with ProcessPoolExecutor(
+        max_workers=2,
+        mp_context=mp.get_context("spawn"),
+        initializer=corpus.init_clean_worker,
+        initargs=(str(font),),
+    ) as executor:
+        actual = list(
+            corpus.ordered_clean_rows(executor, path, spec, 0, 0, batch_rows=2, prefetch=3)
+        )
+    assert actual == expected

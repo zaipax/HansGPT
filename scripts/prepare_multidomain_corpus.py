@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
+import multiprocessing as mp
 import os
 import sqlite3
 import subprocess
+import time
 import unicodedata
-from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter, deque
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -37,6 +41,8 @@ from hansgpt_research.prepare_corpus import (
     digest_file,
     download,
     render_binary,
+    shingle_anchors,
+    shingles,
     split_for_page,
 )
 
@@ -257,8 +263,27 @@ def rows(path, adapter):
                     yield value
 
 
+@lru_cache(maxsize=4096)
+def cached_shingles(text):
+    return frozenset(shingles(text))
+
+
+def dedup_features(text, body):
+    canonical = canonical_han(body)
+    text_canonical = canonical if text == body else canonical_han(text)
+    return {
+        "canonical": canonical,
+        "canonical_hash": hashlib.sha256(canonical.encode()).hexdigest(),
+        "text_canonical_hash": hashlib.sha256(text_canonical.encode()).hexdigest(),
+        "body_hash": hashlib.sha256(body.encode()).hexdigest(),
+        "text_hash": hashlib.sha256(text.encode()).hexdigest(),
+        "han_count": len(text_canonical),
+        "anchors": shingle_anchors(canonical),
+    }
+
+
 class ResumableStore(CorpusStore):
-    def __init__(self, path):
+    def __init__(self, path, cache_mib=8192):
         if path.exists():
             self.connection = sqlite3.connect(path)
             self.connection.execute("PRAGMA cache_size=-65536")
@@ -267,6 +292,11 @@ class ResumableStore(CorpusStore):
             )
         else:
             super().__init__(path)
+        self.connection.execute("PRAGMA journal_mode=WAL")
+        self.connection.execute("PRAGMA synchronous=NORMAL")
+        self.connection.execute(f"PRAGMA cache_size=-{cache_mib * 1024}")
+        self.connection.execute("PRAGMA temp_store=MEMORY")
+        self.connection.execute("PRAGMA wal_autocheckpoint=16384")
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY, payload TEXT)"
         )
@@ -301,16 +331,62 @@ class ResumableStore(CorpusStore):
             "SELECT 1 FROM exclusions WHERE hash=?", (hashed,)
         ).fetchone()
 
-    def add_with_body(self, record, body, stats):
-        if body == record["text"]:
-            return self.add(record, stats)
-        indexed = {**record, "text": body, "text_sha256": hashlib.sha256(body.encode()).hexdigest()}
-        if not self.add(indexed, stats):
+    def excluded_features(self, features):
+        return self.connection.execute(
+            "SELECT 1 FROM exclusions WHERE hash IN (?,?) LIMIT 1",
+            (features["canonical_hash"], features["text_canonical_hash"]),
+        ).fetchone()
+
+    def add_with_body(self, record, body, stats, features=None):
+        features = features or dedup_features(record["text"], body)
+        existing = self.connection.execute(
+            "SELECT text_hash FROM records WHERE canonical_hash=?",
+            (features["canonical_hash"],),
+        ).fetchone()
+        if existing:
+            stats[
+                "rejected_exact_duplicate"
+                if existing[0] == features["body_hash"]
+                else "rejected_punctuation_variant"
+            ] += 1
             return False
-        key = hashlib.sha256(canonical_han(body).encode()).hexdigest()
-        self.connection.execute(
-            "UPDATE records SET payload=? WHERE canonical_hash=?",
-            (json.dumps(record, ensure_ascii=False), key),
+        canonical, anchors = features["canonical"], features["anchors"]
+        placeholders = ",".join("?" for _ in anchors)
+        # Count matching anchors before fetching large record payloads. This is
+        # algebraically equivalent to the original join/group/filter/order/limit.
+        candidates = self.connection.execute(
+            f"""WITH hits AS MATERIALIZED (
+                SELECT record_id, COUNT(*) AS matches FROM anchors
+                WHERE anchor IN ({placeholders}) GROUP BY record_id HAVING COUNT(*) >= 2
+            ) SELECT r.canonical FROM hits JOIN records r ON r.id=hits.record_id
+              WHERE r.length BETWEEN ? AND ?
+              ORDER BY hits.matches DESC, r.id LIMIT 101""",
+            [*anchors, int(len(canonical) * 0.9), int(len(canonical) / 0.9) + 1],
+        ).fetchall()
+        if len(candidates) > 100:
+            stats["near_duplicate_candidate_limit_reached"] += 1
+        if candidates:
+            parts = cached_shingles(canonical)
+            for (candidate,) in candidates[:100]:
+                other = cached_shingles(candidate)
+                if len(parts & other) / len(parts | other) >= 0.9:
+                    stats["rejected_near_duplicate"] += 1
+                    return False
+        cursor = self.connection.execute(
+            """INSERT INTO records
+               (text_hash,canonical_hash,canonical,length,split,payload) VALUES (?,?,?,?,?,?)""",
+            (
+                features["body_hash"],
+                features["canonical_hash"],
+                canonical,
+                len(canonical),
+                record["split"],
+                json.dumps(record, ensure_ascii=False),
+            ),
+        )
+        self.connection.executemany(
+            "INSERT INTO anchors VALUES (?,?)",
+            [(a, cursor.lastrowid) for a in anchors],
         )
         return True
 
@@ -340,6 +416,115 @@ def seed_exclusions(store, state, old):
         print("Seeded existing-corpus exclusions:", split, count, flush=True)
     state["seeded"] = True
     store.save_state(state)
+
+
+_WORKER = None
+
+
+def init_clean_worker(font_path, known_valid="", known_bad=""):
+    global _WORKER
+    pa.set_cpu_count(1)
+    with TTFont(font_path) as font_data:
+        supported = set(font_data.getBestCmap())
+    _WORKER = (
+        FastOpenCC(),
+        ImageFont.truetype(str(font_path), size=26),
+        supported,
+        set(known_valid),
+        set(known_bad),
+    )
+
+
+def clean_batch(task):
+    index, spec, batch = task
+    converter, font, supported, checked, bad = _WORKER
+    output = []
+    for row_index, row in batch:
+        stats = Counter()
+        identity = (
+            row.get("text")
+            if spec["adapter"] in {"jsonl_text", "parquet_text"}
+            else json.dumps(
+                {k: row.get(k, "") for k in ("instruction", "input", "output")}, ensure_ascii=False
+            )
+        )
+        page_id = hashlib.sha256(str(identity).encode()).hexdigest()
+        metadata = json.dumps(
+            {
+                k: row[k]
+                for k in ("source", "score", "domain", "copyright", "answer_from", "human_verified")
+                if k in row
+            },
+            ensure_ascii=False,
+        )
+        units = []
+        for unit_index, text in enumerate(cleaned_units(row, spec, converter, stats)):
+            body = text.split("资料摘录：", 1)[1] if spec["adapter"] == "jsonl_article" else text
+            chars = set(text)
+            for char in chars - checked - bad:
+                try:
+                    if ord(char) not in supported:
+                        raise ValueError("Font lacks character")
+                    render_binary(char, font)
+                    checked.add(char)
+                except ValueError:
+                    bad.add(char)
+            features = dedup_features(text, body)
+            domain, method = domain_for(text, spec)
+            record = {
+                "sample_id": f"{index}:{row_index}:{unit_index}",
+                "source_page_id": page_id,
+                "source_file": spec["dataset"] + "/" + spec["path"],
+                "source_file_revision": spec["revision"],
+                "source_url": "https://modelscope.cn/datasets/" + spec["dataset"],
+                "source_family": spec["family"],
+                "domain": domain,
+                "domain_method": method,
+                "source_metadata": metadata,
+                "text": text,
+                "text_sha256": features["text_hash"],
+                "han_count": features["han_count"],
+                "split": split_for_page(page_id, 20260915),
+            }
+            units.append((record, body, features, "".join(sorted(chars & bad))))
+        output.append((row_index, dict(stats), units))
+    return output
+
+
+def ordered_clean_rows(
+    executor, path, spec, index, start, *, limit=None, batch_rows=32, prefetch=48
+):
+    """Bound queued work and consume in exact source order, independent of worker scheduling."""
+
+    def tasks():
+        batch = []
+        for row_index, row in enumerate(rows(path, spec["adapter"])):
+            if row_index < start:
+                continue
+            if limit is not None and row_index >= limit:
+                break
+            batch.append((row_index, row))
+            if len(batch) == batch_rows:
+                yield index, spec, batch
+                batch = []
+        if batch:
+            yield index, spec, batch
+
+    iterator, pending = iter(tasks()), deque()
+    try:
+        for _ in range(prefetch):
+            task = next(iterator, None)
+            if task is None:
+                break
+            pending.append(executor.submit(clean_batch, task))
+        while pending:
+            yield from pending.popleft().result()
+            task = next(iterator, None)
+            if task is not None:
+                pending.append(executor.submit(clean_batch, task))
+    finally:
+        for future in pending:
+            future.cancel()
 
 
 def export(store, state, output, font_path, source_config, config_hash, args):
@@ -425,7 +610,14 @@ def export(store, state, output, font_path, source_config, config_hash, args):
         "status": "bounded_multidomain_experiment_corpus",
         "mode": args.mode,
         "created_at": datetime.now(UTC).isoformat(),
-        "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "git_commit": args.start_git_commit,
+        "processing": {
+            "workers": args.workers,
+            "batch_rows": args.batch_rows,
+            "sqlite_cache_mib": args.cache_mib,
+            "code_history": args.code_history,
+            "merge_order": "original source order; global exact/near dedup",
+        },
         "source_config_sha256": config_hash,
         "source": source_config,
         "source_scan": state["scan"],
@@ -462,7 +654,13 @@ def main():
     parser.add_argument("--interim", type=Path, required=True)
     parser.add_argument("--mode", choices=["smoke", "full"], default="full")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--workers", type=int, default=24)
+    parser.add_argument("--batch-rows", type=int, default=32)
+    parser.add_argument("--cache-mib", type=int, default=8192)
+    parser.add_argument("--upgrade-from-script-sha256")
     args = parser.parse_args()
+    if not 1 <= args.workers <= 64 or not 1 <= args.batch_rows <= 512 or args.cache_mib < 64:
+        raise ValueError("Invalid worker, chunk or cache configuration")
     if subprocess.check_output(["git", "status", "--porcelain"], text=True).strip():
         raise RuntimeError("Prepare data only from clean committed source")
     if args.output.resolve() == Path("data/processed/modelscope_zhwiki_full_v1").resolve():
@@ -473,6 +671,18 @@ def main():
         raise FileExistsError("A verified corpus is immutable; use a new version")
     args.output.mkdir(parents=True, exist_ok=True)
     args.interim.mkdir(parents=True, exist_ok=True)
+    old_status_path = args.interim / "status.json"
+    if old_status_path.exists():
+        old_pid = json.loads(old_status_path.read_text()).get("pid")
+        process = Path("/proc") / str(old_pid) / "cmdline"
+        if (
+            old_pid != os.getpid()
+            and process.exists()
+            and b"prepare_multidomain_corpus.py" in process.read_bytes()
+        ):
+            raise RuntimeError("A preparation worker already owns this output")
+    lock = (args.interim / "prepare.lock").open("a")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     args.raw.mkdir(parents=True, exist_ok=True)
     pa.set_cpu_count(2)
     source_config = json.loads(Path(args.sources).read_text("utf-8"))
@@ -486,8 +696,30 @@ def main():
     }
     run_path = args.interim / "run.json"
     if run_path.exists() and json.loads(run_path.read_text()) != identity:
-        raise ValueError("Resume identity mismatch")
+        previous = json.loads(run_path.read_text())
+        unchanged = all(previous.get(k) == v for k, v in identity.items() if k != "script_sha256")
+        if (
+            not args.resume
+            or not args.upgrade_from_script_sha256
+            or not unchanged
+            or previous["script_sha256"] != args.upgrade_from_script_sha256
+        ):
+            raise ValueError("Resume identity mismatch")
+        history_path = args.interim / "code_history.json"
+        history = json.loads(history_path.read_text()) if history_path.exists() else []
+        history.append(
+            {
+                "from": previous,
+                "to": identity,
+                "time": datetime.now(UTC).isoformat(),
+                "reason": "explicit checked parallelism/query-plan upgrade; source data unchanged",
+            }
+        )
+        atomic_json(history_path, history)
     atomic_json(run_path, identity)
+    args.start_git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    history_path = args.interim / "code_history.json"
+    args.code_history = json.loads(history_path.read_text()) if history_path.exists() else []
     files = [f for f in source_config["files"] if args.mode == "full" or f["smoke"]]
     font_path = Path("data/raw/hansgpt_modelscope_wikipedia/20231101/NotoSansCJKsc-Regular.otf")
     if digest_file(font_path) != FONT_SHA:
@@ -506,18 +738,14 @@ def main():
             for i, future in enumerate(as_completed(futures), 1):
                 future.result()
                 status("downloading", completed_files=i, files=len(files))
-        store = ResumableStore(args.interim / "records.sqlite")
+        store = ResumableStore(args.interim / "records.sqlite", cache_mib=args.cache_mib)
         state = store.state()
         if args.mode == "full" and not state["seeded"]:
             status("seeding_existing_corpus_exclusions")
             seed_exclusions(store, state, Path("data/processed/modelscope_zhwiki_full_v1"))
-        converter = FastOpenCC()
-        font = ImageFont.truetype(str(font_path), size=26)
         valid_chars, bad_chars = set(state["characters"]), set(state["bad_characters"])
-        checked_chars = set(valid_chars)
-        with TTFont(font_path) as source_font:
-            supported = set(source_font.getBestCmap())
         stats, family_han = Counter(state["stats"]), Counter(state["family_han"])
+        initial_han, started = sum(family_han.values()), time.monotonic()
 
         def commit_state():
             state.update(
@@ -533,17 +761,35 @@ def main():
                 sources=len(files),
                 accepted_han=sum(family_han.values()),
                 family_han=dict(family_han),
+                workers=args.workers,
+                sqlite_cache_mib=args.cache_mib,
+                processing_han_per_second=(sum(family_han.values()) - initial_han)
+                / max(1, time.monotonic() - started),
             )
             space_guard(args.output)
 
+        executor = ProcessPoolExecutor(
+            max_workers=args.workers,
+            mp_context=mp.get_context("spawn"),
+            initializer=init_clean_worker,
+            initargs=(str(font_path), state["characters"], state["bad_characters"]),
+        )
         for index in range(state["file"], len(files)):
             spec = files[index]
             family = spec["family"]
             completed, seen, reason = True, state["row"], None
             if family_han[family] < CAPS[family]:
-                for row_index, row in enumerate(rows(raw_path(args.raw, spec), spec["adapter"])):
-                    if row_index < state["row"]:
-                        continue
+                cleaned = ordered_clean_rows(
+                    executor,
+                    raw_path(args.raw, spec),
+                    spec,
+                    index,
+                    state["row"],
+                    limit=200 if args.mode == "smoke" else None,
+                    batch_rows=args.batch_rows,
+                    prefetch=args.workers * 2,
+                )
+                for row_index, row_stats, units in cleaned:
                     if (
                         args.mode == "smoke"
                         and row_index >= 200
@@ -551,76 +797,28 @@ def main():
                     ):
                         completed, reason = False, "smoke_or_family_budget"
                         break
-                    text_identity = (
-                        row.get("text")
-                        if spec["adapter"] in {"jsonl_text", "parquet_text"}
-                        else json.dumps(
-                            {k: row.get(k, "") for k in ("instruction", "input", "output")},
-                            ensure_ascii=False,
-                        )
-                    )
-                    page_id = hashlib.sha256(str(text_identity).encode()).hexdigest()
-                    for unit_index, text in enumerate(cleaned_units(row, spec, converter, stats)):
+                    stats.update(row_stats)
+                    for record, original_body, features, invalid_chars in units:
                         if family_han[family] >= CAPS[family]:
                             break
-                        original_body = (
-                            text.split("资料摘录：", 1)[1]
-                            if spec["adapter"] == "jsonl_article"
-                            else text
-                        )
-                        if store.excluded(text) or store.excluded(original_body):
+                        if store.excluded_features(features):
                             stats["rejected_existing_wikipedia_exact"] += 1
                             continue
-                        chars = set(text)
-                        for char in chars - checked_chars - bad_chars:
-                            try:
-                                if ord(char) not in supported:
-                                    raise ValueError("Font lacks this character")
-                                render_binary(char, font)
-                                checked_chars.add(char)
-                            except ValueError:
-                                bad_chars.add(char)
-                        if chars & bad_chars:
+                        if invalid_chars:
+                            bad_chars.update(invalid_chars)
                             stats["rejected_unrenderable"] += 1
                             continue
-                        domain, method = domain_for(text, spec)
-                        record = {
-                            "sample_id": f"{index}:{row_index}:{unit_index}",
-                            "source_page_id": page_id,
-                            "source_file": spec["dataset"] + "/" + spec["path"],
-                            "source_file_revision": spec["revision"],
-                            "source_url": "https://modelscope.cn/datasets/" + spec["dataset"],
-                            "source_family": family,
-                            "domain": domain,
-                            "domain_method": method,
-                            "source_metadata": json.dumps(
-                                {
-                                    k: row[k]
-                                    for k in (
-                                        "source",
-                                        "score",
-                                        "domain",
-                                        "copyright",
-                                        "answer_from",
-                                        "human_verified",
-                                    )
-                                    if k in row
-                                },
-                                ensure_ascii=False,
-                            ),
-                            "text": text,
-                            "text_sha256": hashlib.sha256(text.encode()).hexdigest(),
-                            "han_count": len(HAN.findall(text)),
-                            "split": split_for_page(page_id, 20260915),
-                        }
-                        if store.add_with_body(record, original_body, stats):
+                        if store.add_with_body(record, original_body, stats, features=features):
                             family_han[family] += record["han_count"]
-                            valid_chars.update(chars)
+                            valid_chars.update(record["text"])
                             stats["retained_paragraphs"] += 1
                     state["row"] = row_index + 1
                     seen = row_index + 1
                     if state["row"] % 1000 == 0:
                         commit_state()
+                cleaned.close()
+                if args.mode == "smoke" and seen >= 200:
+                    completed, reason = False, "smoke_or_family_budget"
             else:
                 completed, reason = False, "family_budget"
             state["scan"].append(
@@ -634,6 +832,8 @@ def main():
             )
             state["file"], state["row"] = index + 1, 0
             commit_state()
+        executor.shutdown(wait=True, cancel_futures=True)
+        executor = None
         status("exporting", accepted_han=sum(family_han.values()))
         report = export(store, state, args.output, font_path, source_config, config_hash, args)
         store.close()
@@ -642,6 +842,10 @@ def main():
     except BaseException as error:
         status("failed", error_type=type(error).__name__, error=str(error))
         raise
+    finally:
+        if "executor" in locals() and executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+        lock.close()
 
 
 if __name__ == "__main__":

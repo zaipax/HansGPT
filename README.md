@@ -22,6 +22,10 @@ GPU 0 上从头训练、断点恢复与完整评估的固定实验协议见
 以完整中文句子为目标的混合像素头、条件对抗微调和原图反馈诊断协议见
 [`BINARY_GPT_V2_EXPERIMENT.md`](BINARY_GPT_V2_EXPERIMENT.md)。
 
+纯 Transformer 与 CNN 输入的 A／B／C 第二轮训练及完整测试评估见
+[`ABC 第二轮效果报告`](reports/attention_abc_r2/REPORT.md)：字节解码方案能生成清晰字形，
+但自由续写仍存在严重的词句循环和语义问题。
+
 ## 功能
 
 - 左右分栏的输入与预览界面

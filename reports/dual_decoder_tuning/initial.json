@@ -1,0 +1,305 @@
+{
+  "config": {
+    "experiment": "hansgpt_dual_decoder_r1",
+    "variant": "D",
+    "data_requirements": {
+      "full_source_provider": "ModelScope",
+      "full_source_shards": 6,
+      "manifest_sha256": "78519dc4f29f5612c9a0633c3b2a9d46e08b87c5ed9bf347cb987952ab83a2f6"
+    },
+    "model": {
+      "hidden_size": 1024,
+      "num_hidden_layers": 24,
+      "num_attention_heads": 16,
+      "num_key_value_heads": 4,
+      "intermediate_size": 2816,
+      "max_position_embeddings": 2048,
+      "glyph_deduplication_strategy": "packed",
+      "rms_norm_eps": 1e-06,
+      "rope_theta": 10000.0,
+      "attention_dropout": 0.0,
+      "initializer_range": 0.02,
+      "deduplicate_glyphs": true,
+      "glyph_encode_chunk_size": 256
+    },
+    "encoder": {
+      "width": 128,
+      "layers": 4,
+      "heads": 4
+    },
+    "training": {
+      "seed": 20260914,
+      "sequence_length": 256,
+      "batch_size": 32,
+      "gradient_accumulation_steps": 1,
+      "learning_rate": 0.0003,
+      "minimum_learning_rate_ratio": 0.1,
+      "weight_decay": 0.1,
+      "warmup_tokens": 1000000,
+      "target_tokens": 100000000,
+      "max_epochs": 1000,
+      "max_grad_norm": 1.0,
+      "precision": "fp16",
+      "gradient_checkpointing": false,
+      "num_workers": 2,
+      "sampler": "sortish",
+      "sortish_pool_batches": 64,
+      "log_every_steps": 10,
+      "validate_every_tokens": 5000000,
+      "checkpoint_every_steps": 1000,
+      "max_consecutive_overflows": 20,
+      "head_chunk_size": 128,
+      "freeze_backbone": false,
+      "validation_samples": 128,
+      "validation_batch_size": 32,
+      "adversarial_weight": 0.0
+    },
+    "model_family": "dual_decoder_v1",
+    "decoders": {
+      "width": 256,
+      "semantic_layers": 2,
+      "semantic_slots": 4,
+      "glyph_layers": 3,
+      "part_slots": 16,
+      "heads": 8,
+      "intermediate_size": 768
+    }
+  },
+  "gpu": "Tesla V100S-PCIE-32GB",
+  "pytorch": "2.8.0+cu128",
+  "git_commit": "e0c47cf3f639c5d967afffffc10f02ca8eeece6f",
+  "data_manifest_sha256": "78519dc4f29f5612c9a0633c3b2a9d46e08b87c5ed9bf347cb987952ab83a2f6",
+  "sample_indices": [
+    10,
+    56,
+    95,
+    112,
+    118,
+    120,
+    125,
+    129,
+    130,
+    163,
+    180,
+    187,
+    219,
+    227,
+    233,
+    238,
+    247,
+    286,
+    297,
+    300,
+    307,
+    340,
+    343,
+    345,
+    347,
+    349,
+    351,
+    353,
+    356,
+    366,
+    379,
+    386,
+    405,
+    418,
+    421,
+    427,
+    428,
+    432,
+    556,
+    571,
+    575,
+    618,
+    620,
+    621,
+    623,
+    626,
+    627,
+    677,
+    703,
+    723,
+    764,
+    793,
+    796,
+    809,
+    811,
+    815,
+    857,
+    859,
+    862,
+    863,
+    864,
+    867,
+    871,
+    878
+  ],
+  "protocol": "64 real 256-grid chunks; 2 warmup updates; includes transfer/backward/update",
+  "cases": [
+    {
+      "case": {
+        "name": "batch16_head128",
+        "batch_size": 16,
+        "head_chunk_size": 128,
+        "checkpointing": false
+      },
+      "parameters": 277572880,
+      "seconds_per_update": 3.15394665269802,
+      "attempted_targets_per_second": 5194.761295656168,
+      "successful_targets_per_second": 5194.761295656168,
+      "successful_steps": 3,
+      "measured_steps": 3,
+      "tokens_per_update": 16384,
+      "final_nll_per_pixel": 0.4704703255556524,
+      "gradient_norms": [
+        0.5579598546028137,
+        0.2793283462524414,
+        0.2232362926006317
+      ],
+      "peak_allocated_bytes": 14629651968,
+      "peak_reserved_bytes": 15189671936
+    },
+    {
+      "case": {
+        "name": "batch32_head128",
+        "batch_size": 32,
+        "head_chunk_size": 128,
+        "checkpointing": false
+      },
+      "parameters": 277572880,
+      "seconds_per_update": 3.0283083397274217,
+      "attempted_targets_per_second": 5410.281306253883,
+      "successful_targets_per_second": 5410.281306253883,
+      "successful_steps": 3,
+      "measured_steps": 3,
+      "tokens_per_update": 16384,
+      "final_nll_per_pixel": 0.4704699118155986,
+      "gradient_norms": [
+        0.5579519867897034,
+        0.27933600544929504,
+        0.22323286533355713
+      ],
+      "peak_allocated_bytes": 22689170432,
+      "peak_reserved_bytes": 23221764096
+    },
+    {
+      "case": {
+        "name": "batch32_head256",
+        "batch_size": 32,
+        "head_chunk_size": 256,
+        "checkpointing": false
+      },
+      "parameters": 277572880,
+      "seconds_per_update": 2.5559976193277785,
+      "attempted_targets_per_second": 6410.021619781068,
+      "successful_targets_per_second": 6410.021619781068,
+      "successful_steps": 3,
+      "measured_steps": 3,
+      "tokens_per_update": 16384,
+      "final_nll_per_pixel": 0.4704702985472977,
+      "gradient_norms": [
+        0.5579660534858704,
+        0.2793360650539398,
+        0.22324135899543762
+      ],
+      "peak_allocated_bytes": 23065827328,
+      "peak_reserved_bytes": 23630708736
+    },
+    {
+      "case": {
+        "name": "batch32_head512",
+        "batch_size": 32,
+        "head_chunk_size": 512,
+        "checkpointing": false
+      },
+      "parameters": 277572880,
+      "seconds_per_update": 2.4185291169366487,
+      "attempted_targets_per_second": 6774.365412954904,
+      "successful_targets_per_second": 6774.365412954904,
+      "successful_steps": 3,
+      "measured_steps": 3,
+      "tokens_per_update": 16384,
+      "final_nll_per_pixel": 0.47047035582363605,
+      "gradient_norms": [
+        0.5579845905303955,
+        0.2793382406234741,
+        0.22324159741401672
+      ],
+      "peak_allocated_bytes": 23929068544,
+      "peak_reserved_bytes": 24501026816
+    },
+    {
+      "case": {
+        "name": "batch32_fused",
+        "batch_size": 32,
+        "head_chunk_size": 256,
+        "checkpointing": false,
+        "fused_adamw": true
+      },
+      "parameters": 277572880,
+      "seconds_per_update": 2.5540746913757175,
+      "attempted_targets_per_second": 6414.847637511722,
+      "successful_targets_per_second": 6414.847637511722,
+      "successful_steps": 3,
+      "measured_steps": 3,
+      "tokens_per_update": 16384,
+      "final_nll_per_pixel": 0.4704706952907145,
+      "gradient_norms": [
+        0.5579786896705627,
+        0.2793438136577606,
+        0.2232445627450943
+      ],
+      "peak_allocated_bytes": 23066011136,
+      "peak_reserved_bytes": 23630708736
+    },
+    {
+      "case": {
+        "name": "batch48",
+        "batch_size": 48,
+        "head_chunk_size": 256,
+        "checkpointing": false,
+        "fused_adamw": true
+      },
+      "parameters": 277572880,
+      "seconds_per_update": 2.5517860943606743,
+      "attempted_targets_per_second": 6420.600863139688,
+      "successful_targets_per_second": 6420.600863139688,
+      "successful_steps": 3,
+      "measured_steps": 3,
+      "tokens_per_update": 16384,
+      "final_nll_per_pixel": 0.47047003731131554,
+      "gradient_norms": [
+        0.557930588722229,
+        0.279330849647522,
+        0.2232355773448944
+      ],
+      "peak_allocated_bytes": 29504590336,
+      "peak_reserved_bytes": 30452744192
+    },
+    {
+      "case": {
+        "name": "batch64_recompute",
+        "batch_size": 64,
+        "head_chunk_size": 256,
+        "checkpointing": true,
+        "fused_adamw": true
+      },
+      "parameters": 277572880,
+      "seconds_per_update": 2.7995196159463376,
+      "attempted_targets_per_second": 5852.432648328354,
+      "successful_targets_per_second": 5852.432648328354,
+      "successful_steps": 3,
+      "measured_steps": 3,
+      "tokens_per_update": 16384,
+      "final_nll_per_pixel": 0.47046868596225977,
+      "gradient_norms": [
+        0.5579110383987427,
+        0.2793194353580475,
+        0.22321420907974243
+      ],
+      "peak_allocated_bytes": 6467059200,
+      "peak_reserved_bytes": 7365197824
+    }
+  ]
+}

@@ -26,6 +26,9 @@ GPU 0 上从头训练、断点恢复与完整评估的固定实验协议见
 [`ABC 第二轮效果报告`](reports/attention_abc_r2/REPORT.md)：字节解码方案能生成清晰字形，
 但自由续写仍存在严重的词句循环和语义问题。
 
+语义与字形两个 Transformer decoder 联合一次预测完整位图的方案、GPU5 参数测速及
+训练协议见 [`DUAL_DECODER_EXPERIMENT.md`](DUAL_DECODER_EXPERIMENT.md)。
+
 ## 功能
 
 - 左右分栏的输入与预览界面

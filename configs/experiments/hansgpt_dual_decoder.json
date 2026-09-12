@@ -47,11 +47,12 @@
     "validate_every_tokens": 5000000,
     "checkpoint_every_steps": 1000,
     "max_consecutive_overflows": 20,
-    "head_chunk_size": 128,
+    "head_chunk_size": 1024,
     "freeze_backbone": false,
     "validation_samples": 128,
     "validation_batch_size": 32,
-    "adversarial_weight": 0.0
+    "adversarial_weight": 0.0,
+    "fused_adamw": false
   },
   "model_family": "dual_decoder_v1",
   "decoders": {

@@ -44,6 +44,35 @@ target-image features are used. The target image only enters the pixel loss.
 - Periodic fixed-subset validation and raw-grid generation diagnostics. Cycle
   detection includes periods up to 16; legal glyphs alone are not language success.
 
+## Selected GPU5 configuration
+
+The implemented model has **277,572,880 parameters**. All timed updates below
+completed successfully. Values include GPU transfers/backward/optimizer updates,
+but exclude dataset loading, validation and checkpoint I/O. The fixed 64-chunk
+update is split into microbatches as indicated, so batch48 also has a trailing
+16-chunk microbatch. Measurements establish a practical configuration, not a
+universal throughput maximum.
+
+| Actual batch | Spatial chunk | Recompute | Optimizer | Grids/s | Peak allocated GiB |
+|---:|---:|---|---|---:|---:|
+| 16 | 128 | no | AdamW | 5,195 | 13.62 |
+| 32 | 128 | no | AdamW | 5,410 | 21.13 |
+| 32 | 256 | no | AdamW | 6,410 | 21.48 |
+| 32 | 512 | no | AdamW | 6,774 | 22.29 |
+| 32 | 256 | no | fused AdamW | 6,415 | 21.48 |
+| 48 | 256 | no | fused AdamW | 6,421 | 27.48 |
+| 64 | 256 | yes | fused AdamW | 5,852 | 6.02 |
+| **32** | **1024** | **no** | **AdamW** | **7,165** | **23.74** |
+| 32 | 2048 | no | AdamW | 7,256 | 26.72 |
+
+Select batch32, accumulation1, spatial chunk1024, encoder chunk256, no recompute
+and ordinary AdamW. Chunk2048 is only about 1.3% faster while using roughly 3GiB
+more memory; the selected configuration preserves headroom for varying real glyph
+diversity. The first seven cases use three timed updates; the last two use five,
+all after two warmups. Raw results and exact source/config identities:
+[initial](reports/dual_decoder_tuning/initial.json) and
+[extended](reports/dual_decoder_tuning/extended.json).
+
 Configuration: `configs/experiments/hansgpt_dual_decoder.json`. Use the canonical
 clean-main server pull and `uv sync --frozen` before GPU checks. Run tests and the
 benchmark before choosing the final committed configuration, then a fresh smoke

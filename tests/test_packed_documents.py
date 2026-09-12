@@ -57,3 +57,43 @@ def test_heldout_near_index_checks_punctuation_variants_and_near_copies():
     assert idx.matches(text)
     assert idx.matches(text + "啊")
     assert not idx.matches("科学实验必须认真记录数据并且验证结果")
+
+
+def test_explicit_new_corpus_requires_pinned_full_identity(tmp_path, monkeypatch):
+    import hansgpt_research.train_glyph_lm as training
+
+    receipt = dict(
+        manifest=dict(type="chinese_document_packed_v3", mode="full"),
+        manifest_sha256="a" * 64,
+        verification={},
+        verification_sha256="b" * 64,
+        model_consumed_sha256={},
+    )
+    calls = []
+
+    def verify(_path, **kwargs):
+        calls.append(kwargs)
+        return receipt
+
+    monkeypatch.setattr(training, "verify_data_readiness", verify)
+    monkeypatch.setattr(
+        training.subprocess,
+        "check_output",
+        lambda args, **kwargs: "" if "--porcelain" in args else "main",
+    )
+    config = dict(
+        training=dict(seed=7, precision="fp32"),
+        data_requirements=dict(corpus_type="chinese_document_packed_v3", manifest_sha256="a" * 64),
+    )
+    training.runtime_metadata(config, tmp_path, torch.device("cpu"))
+    assert calls[-1]["require_full_snapshot"] is False
+    config["data_requirements"]["manifest_sha256"] = "wrong"
+    with pytest.raises(ValueError, match="exact verified full"):
+        training.runtime_metadata(config, tmp_path, torch.device("cpu"))
+    config["data_requirements"]["manifest_sha256"] = "a" * 64
+    receipt["manifest"]["mode"] = "smoke"
+    with pytest.raises(ValueError, match="exact verified full"):
+        training.runtime_metadata(config, tmp_path, torch.device("cpu"))
+    config["data_requirements"] = {}
+    training.runtime_metadata(config, tmp_path, torch.device("cpu"))
+    assert calls[-1]["require_full_snapshot"] is True

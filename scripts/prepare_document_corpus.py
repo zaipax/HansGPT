@@ -600,7 +600,7 @@ def main():
         source_config_sha256=sha("configs/datasets/chinese_multidomain_v1.json"),
         workers=args.workers,
         reused_candidate_identity=reuse_identity,
-        cleaning_counter_scope="recomputed tasks only; reused tasks lack original cleaning counters",
+        cleaning_counter_scope="recomputed tasks only; reused tasks have no cleaning counters",
         elapsed_seconds=time.monotonic() - started,
         verified_raw_segments=verified,
         export=export_stats,

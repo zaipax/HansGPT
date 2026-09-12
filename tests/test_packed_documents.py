@@ -110,3 +110,23 @@ def test_explicit_new_corpus_requires_pinned_full_identity(tmp_path, monkeypatch
     config["data_requirements"] = {}
     training.runtime_metadata(config, tmp_path, torch.device("cpu"))
     assert calls[-1]["require_full_snapshot"] is True
+
+
+def test_candidate_reuse_copies_complete_files_and_replays_interrupted_writes(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    code = runpy.run_path("scripts/prepare_document_corpus.py")
+    replay = code["replay_or_reuse"]
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    replay.__globals__["SETTINGS"] = dict(reuse=str(old), interim=str(new))
+    replay.__globals__["worker"] = lambda task: "replayed"
+    pq.write_table(pa.table({"text": ["完整片段"]}), old / "complete.parquet")
+    original = (old / "complete.parquet").read_bytes()
+    assert replay(dict(id="complete"))["records"] == 1
+    assert (new / "complete.parquet").read_bytes() == original
+    assert (old / "complete.parquet").read_bytes() == original
+    (old / "partial.parquet").write_bytes(b"incomplete")
+    assert replay(dict(id="partial")) == "replayed"

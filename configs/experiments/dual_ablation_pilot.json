@@ -1,0 +1,19 @@
+{
+  "name": "dual_ablation_pilot_v1",
+  "initial_checkpoint": "artifacts/checkpoints/hansgpt_dual_r1/best.pt",
+  "initial_sha256": "67f91aee5aecf54237cdbfb9159f8fa2dc30b22bfd0b3c916f58781791edadb2",
+  "data": "data/processed/modelscope_zhwiki_full_v1",
+  "gpus": {"A": 5, "B": 6, "C": 7},
+  "seed": 20260914,
+  "language_targets": 10000000,
+  "language_learning_rate": 0.0001,
+  "language_warmup_targets": 100000,
+  "minimum_learning_rate_ratio": 0.3,
+  "validate_every_targets": 1000000,
+  "glyph_steps": 2000,
+  "glyph_batch_size": 256,
+  "glyph_learning_rate": 0.0003,
+  "glyph_validation_fraction": 0.1,
+  "generation_samples": 32,
+  "generation_length": 128
+}

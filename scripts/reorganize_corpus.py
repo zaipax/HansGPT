@@ -719,6 +719,11 @@ def main():
         raise ValueError("Parent verification mismatch")
     if parent_manifest["source_config_sha256"] != digest(source_path):
         raise ValueError("Parent source list differs")
+    if parent_manifest.get("mode") != "full":
+        raise ValueError("Use the full verified v1 parent; --smoke selects its subset")
+    inventory = json.loads((args.parent / "glyph_inventory.json").read_text())
+    if inventory["controls"] != {"PAD": 0, "BOS": 1, "EOS": 2, "NEWLINE": 3}:
+        raise ValueError("Unexpected parent control layout")
     identity = {
         "parent_manifest_sha256": digest(args.parent / "manifest.json"),
         "source_config_sha256": digest(source_path),

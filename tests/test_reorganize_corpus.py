@@ -74,7 +74,7 @@ def test_hash_mismatch_and_forged_join_are_rejected():
 def test_gaps_in_parent_order_and_oversized_rows_are_not_joined():
     _, _, join, _ = recover(ONE + "\n" + TWO, expected([ONE, TWO], parents=[2, 4]))
     assert not join.any()
-    line, _, join, opaque = recover(ONE * 5000, expected([ONE]))
+    line, _, join, opaque = recover(ONE * 10000, expected([ONE]))
     assert opaque and line[0] == -1 and not join.any()
 
 

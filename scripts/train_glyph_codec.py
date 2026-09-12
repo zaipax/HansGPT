@@ -56,7 +56,8 @@ def main():
     if readiness["model_consumed_sha256"] != saved["metadata"]["data_sha256"]:
         raise ValueError("Initial checkpoint and glyph assets differ")
     e = AttentionGlyphEncoder(1024, **base["encoder"])
-    d = SpatialGlyphDecoder(DualDecoderConfig(**base["decoders"]))
+    slots = cfg.get("latent_slots", 4)
+    d = SpatialGlyphDecoder(DualDecoderConfig(**{**base["decoders"], "semantic_slots": slots}))
     e.load_state_dict(
         {
             k[len("glyph_encoder.") :]: v
@@ -65,14 +66,14 @@ def main():
         },
         strict=True,
     )
-    d.load_state_dict(
-        {
-            k[len("glyph_decoder.") :]: v
-            for k, v in saved["model"].items()
-            if k.startswith("glyph_decoder.")
-        },
-        strict=True,
-    )
+    decoder_state = {
+        k[len("glyph_decoder.") :]: v
+        for k, v in saved["model"].items()
+        if k.startswith("glyph_decoder.")
+    }
+    if slots != base["decoders"]["semantic_slots"]:
+        decoder_state["slot_positions"] = d.slot_positions.detach().clone()
+    d.load_state_dict(decoder_state, strict=True)
     model = GlyphCodec(args.arm, e, d).cuda()
     del saved, e, d
     ds = GlyphSequenceDataset(cfg["data"], "train", 256)
@@ -124,7 +125,7 @@ def main():
 
     def predict(ids):
         if features is not None:
-            return model.decode(model.adapter(features[ids]).reshape(-1, 4, 256))
+            return model.decode(model.adapter(features[ids]).reshape(-1, model.slots, 256))
         return model(bank[ids])
 
     def status(phase, state="running", **extra):

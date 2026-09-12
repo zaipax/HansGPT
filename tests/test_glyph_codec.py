@@ -8,28 +8,29 @@ from hansgpt_research.dual_decoder_glyph_lm import DualDecoderConfig, SpatialGly
 from hansgpt_research.glyph_codec import GlyphCodec
 
 
-def make(arm):
+def make(arm, slots=4):
     return GlyphCodec(
         arm,
         AttentionGlyphEncoder(1024, width=128, layers=1, heads=4),
-        SpatialGlyphDecoder(DualDecoderConfig(glyph_layers=1)),
+        SpatialGlyphDecoder(DualDecoderConfig(glyph_layers=1, semantic_slots=slots)),
     )
 
 
 @pytest.mark.parametrize("arm", ["fixed", "spatial"])
-def test_same_latent_contract_and_checkpoint_roundtrip(arm):
+@pytest.mark.parametrize("slots", [4, 16])
+def test_same_latent_contract_and_checkpoint_roundtrip(arm, slots):
     torch.manual_seed(19)
-    model = make(arm).eval()
+    model = make(arm, slots).eval()
     tiles = torch.randint(2, (2, 1, 32, 32), dtype=torch.uint8)
     with torch.no_grad():
         z = model.encode(tiles)
         actual = model(tiles)
-        assert z.shape == (2, 4, 256)
+        assert z.shape == (2, slots, 256)
         torch.testing.assert_close(actual, model.decode(z), rtol=0, atol=0)
     stream = io.BytesIO()
     torch.save(model.state_dict(), stream)
     stream.seek(0)
-    restored = make(arm).eval()
+    restored = make(arm, slots).eval()
     restored.load_state_dict(torch.load(stream, weights_only=True))
     with torch.no_grad():
         torch.testing.assert_close(actual, restored(tiles), rtol=0, atol=0)

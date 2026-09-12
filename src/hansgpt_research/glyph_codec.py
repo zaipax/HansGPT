@@ -42,28 +42,30 @@ class SpatialQueryEncoder(nn.Module):
 
 
 class GlyphCodec(nn.Module):
-    """All reconstruction and future semantic conditions use [...,4,256] latents.
+    """Reconstruction and semantic conditions share [...,slots,256] latents.
 
     This is a glyph module, not a fluent language model. Semantic alignment is a
     separate stage; changing this encoder must never replace a GPT input encoder
     implicitly. The fixed arm's adapter is permanent and checkpointed.
     """
 
-    interface_version = "glyph_latents_4x256_v1"
-
     def __init__(self, arm, encoder, decoder):
         super().__init__()
         if arm not in {"fixed", "spatial"}:
             raise ValueError("Unknown codec arm")
-        if decoder.config.semantic_slots != 4 or decoder.config.width != 256:
-            raise ValueError("Codec requires four width-256 slots")
+        if decoder.config.semantic_slots not in (4, 16) or decoder.config.width != 256:
+            raise ValueError("Codec requires 4 or 16 width-256 slots")
+        self.slots = decoder.config.semantic_slots
+        self.interface_version = f"glyph_latents_{self.slots}x256_v1"
         self.arm = arm
         self.decoder = copy.deepcopy(decoder)
         if arm == "fixed":
             self.encoder = copy.deepcopy(encoder).requires_grad_(False).eval()
-            self.adapter = nn.Sequential(nn.Linear(1024, 1024), nn.RMSNorm(1024))
+            self.adapter = nn.Sequential(
+                nn.Linear(1024, self.slots * 256), nn.RMSNorm(self.slots * 256)
+            )
         else:
-            self.encoder = SpatialQueryEncoder(encoder)
+            self.encoder = SpatialQueryEncoder(encoder, slots=self.slots)
             self.adapter = nn.Identity()
 
     def train(self, mode=True):
@@ -81,14 +83,14 @@ class GlyphCodec(nn.Module):
         if self.arm == "fixed":
             with torch.no_grad():
                 features = self.encoder(flat)
-            latents = self.adapter(features).reshape(-1, 4, 256)
+            latents = self.adapter(features).reshape(-1, self.slots, 256)
         else:
             latents = self.encoder(flat)
-        return latents.reshape(*leading, 4, 256)
+        return latents.reshape(*leading, self.slots, 256)
 
     def decode(self, latents):
-        if latents.shape[-2:] != (4, 256):
-            raise ValueError("Expected [...,4,256] glyph latents")
+        if latents.shape[-2:] != (self.slots, 256):
+            raise ValueError(f"Expected [...,{self.slots},256] glyph latents")
         return self.decoder(latents.flatten(-2))
 
     def forward(self, tiles):

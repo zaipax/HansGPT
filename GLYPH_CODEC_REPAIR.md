@@ -57,3 +57,16 @@ Tests check permanent mapping checkpoint round-trips, reconstruction versus
 external-latent decoding equivalence, frozen-encoder immutability, and gradients
 through spatial queries. Each formal run also verifies cached training and
 uncached inference produce identical binary outputs on audit examples.
+
+## Adaptive spatial-capacity follow-up
+
+`glyph_codec_spatial16.json` separately tests 16 learned query slots on GPU7 after
+the four-slot path reduced pixel errors without achieving exact held-out glyphs.
+Its interface is explicitly versioned as `glyph_latents_16x256_v1`; it cannot be
+substituted for a four-slot semantic output. This increases latent capacity from
+1024 to 4096 scalars and attention cost, so results are not an equal-latent-budget
+comparison. Decoder weights transfer except for the new slot-position embeddings.
+The splits, gates, optimizer and maximum update budgets stay the same.
+
+Interface version denotes a shape/format, not interchangeable learned coordinates.
+Any future semantic alignment must pin the exact selected codec checkpoint hash.

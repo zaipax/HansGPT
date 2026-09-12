@@ -38,6 +38,20 @@ def test_invalid_and_ambiguous_bitmaps_are_not_silently_projected():
     assert result == "[甲/乙]□"
 
 
+def test_generation_summary_catches_multiglyph_cycle_with_zero_adjacent_repeats():
+    key = helpers["bitmap_key"]
+    sequence = np.array([[grid(8), grid(16), grid(24)] * 12])
+    result = helpers["generation_summary"](
+        sequence[:, :1],
+        sequence,
+        {key(grid(8)): ["、"], key(grid(16)): ["公"], key(grid(24)): ["路"]},
+        {},
+    )
+    assert result["summary"]["adjacent_repeat_rate"] == 0
+    assert result["summary"]["exact_cycle_samples"] == 1
+    assert result["samples"][0]["exact_repetition"]["longest_short_cycle_tiles"] == 36
+
+
 def test_prompt_selection_is_deterministic_and_page_disjoint(monkeypatch):
     monkeypatch.setattr(
         pq,

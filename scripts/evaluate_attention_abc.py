@@ -13,6 +13,7 @@ import torch
 from PIL import Image, ImageDraw
 
 from hansgpt_research.attention_glyph_lm import AttentionGlyphGPT
+from hansgpt_research.diagnose_glyph_generation import repetition_metrics
 from hansgpt_research.evaluate_structured_glyph_lm import SplitAccumulator
 from hansgpt_research.glyph_lm import GlyphSequenceDataset, ModelConfig
 from hansgpt_research.train_attention_glyph_lm import check_gpu, validate_nll
@@ -83,6 +84,8 @@ def generation_summary(prompt, generated, labels, controls):
         "fully_legal_nonempty": 0,
         "repeated_adjacent_pairs": 0,
         "adjacent_pairs": 0,
+        "exact_cycle_samples": 0,
+        "near_cycle_samples": 0,
     }
     for index, (prefix, output) in enumerate(zip(prompt, generated, strict=True)):
         keys = [bitmap_key(grid) for grid in output]
@@ -92,6 +95,8 @@ def generation_summary(prompt, generated, labels, controls):
         legal = sum(key in labels for key in body_keys)
         pairs = max(0, len(body) - 1)
         repeats = sum(a == b for a, b in zip(body_keys[:-1], body_keys[1:], strict=True))
+        exact_repetition = repetition_metrics(body, near_hamming=0)
+        near_repetition = repetition_metrics(body, near_hamming=4)
         summaries.append(
             {
                 "sample": index,
@@ -101,6 +106,8 @@ def generation_summary(prompt, generated, labels, controls):
                 "eos_position": eos_at,
                 "exact_content_rate": legal / len(body) if len(body) else None,
                 "adjacent_repeat_rate": repeats / pairs if pairs else 0,
+                "exact_repetition": exact_repetition,
+                "near_repetition": near_repetition,
             }
         )
         totals["body_grids"] += len(body)
@@ -111,6 +118,8 @@ def generation_summary(prompt, generated, labels, controls):
         totals["fully_legal_nonempty"] += int(bool(len(body)) and legal == len(body))
         totals["repeated_adjacent_pairs"] += repeats
         totals["adjacent_pairs"] += pairs
+        totals["exact_cycle_samples"] += int(exact_repetition["has_short_cycle"])
+        totals["near_cycle_samples"] += int(near_repetition["has_short_cycle"])
     totals["exact_content_rate"] = totals["exact_content_grids"] / max(1, totals["body_grids"])
     totals["adjacent_repeat_rate"] = totals["repeated_adjacent_pairs"] / max(
         1, totals["adjacent_pairs"]

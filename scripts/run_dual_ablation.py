@@ -58,7 +58,9 @@ def main():
     parser.add_argument('--config', default='configs/experiments/dual_ablation_pilot.json')
     parser.add_argument('--arm', choices=['A','B','C'], required=True)
     parser.add_argument('--smoke', action='store_true')
+    parser.add_argument('--smoke-tag', default='smoke')
     args = parser.parse_args()
+    if not args.smoke_tag.replace('_','').isalnum():raise ValueError('Invalid smoke tag')
     protocol = json.loads(Path(args.config).read_text())
     if args.smoke:
         protocol.update(language_targets=16384, glyph_steps=3, validate_every_targets=8192,
@@ -68,7 +70,7 @@ def main():
         raise RuntimeError('Wrong physical GPU mapping')
     if subprocess.check_output(['git','status','--porcelain'],text=True).strip():
         raise RuntimeError('Committed clean source required')
-    name = protocol['name'] + ('_smoke' if args.smoke else '')
+    name = protocol['name'] + ('_'+args.smoke_tag if args.smoke else '')
     run = name+'_'+args.arm
     logs = Path('artifacts/logs')/run
     checkpoints = Path('artifacts/checkpoints')/run

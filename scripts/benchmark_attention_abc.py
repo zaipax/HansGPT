@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import gc
 import json
 import subprocess
@@ -11,9 +12,8 @@ from pathlib import Path
 
 import torch
 
-from hansgpt_research.attention_glyph_lm import AttentionGlyphGPT
-from hansgpt_research.glyph_lm import GlyphSequenceDataset, ModelConfig, collate_glyph_sequences
-from hansgpt_research.train_attention_glyph_lm import check_gpu
+from hansgpt_research.glyph_lm import GlyphSequenceDataset, collate_glyph_sequences
+from hansgpt_research.train_attention_glyph_lm import check_gpu, model_from_config
 from hansgpt_research.train_glyph_lm import sequence_lengths, write_json
 from hansgpt_research.train_structured_glyph_lm import (
     complete_optimizer_step,
@@ -26,20 +26,14 @@ def run_case(config, samples, case, device, steps):
     torch.manual_seed(config["training"]["seed"])
     cfg = dict(config["training"])
     cfg["head_chunk_size"] = case["head_chunk_size"]
+    cfg["fused_adamw"] = case.get("fused_adamw", False)
     architecture = dict(config["model"])
     architecture.update(case.get("model", {}))
     if "encode_chunk_size" in case:
         architecture["glyph_encode_chunk_size"] = case["encode_chunk_size"]
-    model = (
-        AttentionGlyphGPT(
-            ModelConfig.from_dict(architecture),
-            config["variant"],
-            config["encoder"],
-            config["decoder"],
-        )
-        .to(device)
-        .train()
-    )
+    construction = copy.deepcopy(config)
+    construction["model"] = architecture
+    model = model_from_config(construction).to(device).train()
     if case["checkpointing"]:
         model.gradient_checkpointing_enable()
     optimizer = optimizer_for(model, cfg)

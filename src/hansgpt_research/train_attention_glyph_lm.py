@@ -15,6 +15,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from hansgpt_research.attention_glyph_lm import GPU_BY_VARIANT, AttentionGlyphGPT
+from hansgpt_research.diagnose_glyph_generation import repetition_metrics
+from hansgpt_research.dual_decoder_glyph_lm import make_dual_model
 from hansgpt_research.glyph_lm import GlyphSequenceDataset, ModelConfig, collate_glyph_sequences
 from hansgpt_research.train_glyph_lm import (
     SortishEpochSampler,
@@ -42,7 +44,7 @@ from hansgpt_research.train_structured_glyph_lm import (
 
 def check_gpu(variant, device):
     if device.type != "cuda":
-        raise RuntimeError("ABC training must run on the training server GPUs")
+        raise RuntimeError("Glyph training must run on its assigned training server GPU")
     if device.index not in (None, 0):
         raise RuntimeError("Use logical cuda:0 after selecting one physical GPU")
     if os.environ.get("CUDA_VISIBLE_DEVICES") != str(GPU_BY_VARIANT[variant]):
@@ -116,7 +118,23 @@ def generation_diagnostic(model, subset, cfg, device, output, step, mode):
         "adjacent_exact_repeat_rate": float(repeated),
         "decode": "greedy bytes" if model.byte_decoder else "pixel threshold 0.5",
         "eos_stopping": False,
+        "repetition": repetition_metrics(values[0], max_period=16),
     }
+
+
+def model_from_config(config):
+    if config.get("model_family") == "dual_decoder_v1":
+        if config["variant"] != "D":
+            raise ValueError("Dual decoder uses variant D on physical GPU5")
+        return make_dual_model(config)
+    if config["variant"] == "D":
+        raise ValueError("Variant D requires dual_decoder_v1")
+    return AttentionGlyphGPT(
+        ModelConfig.from_dict(config["model"]),
+        config["variant"],
+        config["encoder"],
+        config["decoder"],
+    )
 
 
 def train(args):
@@ -153,9 +171,7 @@ def train(args):
     validation = GlyphSequenceDataset(args.data, "validation", cfg["sequence_length"])
     subset, selection = validation_subset(validation, cfg)
     lengths = sequence_lengths(dataset)
-    model = AttentionGlyphGPT(
-        ModelConfig.from_dict(config["model"]), variant, config["encoder"], config["decoder"]
-    ).to(device)
+    model = model_from_config(config).to(device)
     if cfg["gradient_checkpointing"]:
         model.gradient_checkpointing_enable()
     optimizer = optimizer_for(model, cfg)
@@ -163,7 +179,7 @@ def train(args):
     metadata.update(
         run_name=args.run_name,
         mode=args.mode,
-        model_family="attention_abc_v1",
+        model_family=config.get("model_family", "attention_abc_v1"),
         validation_selection=selection,
         training_targets_per_pass=dataset.target_count,
         parameters=sum(p.numel() for p in model.parameters()),

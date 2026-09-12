@@ -482,6 +482,7 @@ def optimizer_for(model, cfg):
         ],
         lr=cfg["learning_rate"],
         betas=(0.9, 0.95),
+        fused=cfg.get("fused_adamw", False),
     )
 
 

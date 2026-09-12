@@ -10,7 +10,7 @@ from hansgpt_research.byte_glyph_decoder import ConditionalByteDecoder
 from hansgpt_research.glyph_lm import ModelConfig, validate_binary_tiles
 from hansgpt_research.structured_glyph_lm import StructuredGlyphGPT
 
-GPU_BY_VARIANT = {"A": 4, "B": 5, "C": 6}
+GPU_BY_VARIANT = {"A": 4, "B": 5, "C": 6, "D": 5}
 
 
 class AttentionGlyphEncoder(nn.Module):
@@ -57,7 +57,7 @@ class AttentionGlyphGPT(StructuredGlyphGPT):
     """A=attention/pixels, B=CNN/bytes, C=attention/bytes; all jointly trainable."""
 
     def __init__(self, config: ModelConfig, variant: str, encoder=None, decoder=None):
-        if variant not in GPU_BY_VARIANT:
+        if variant not in {"A", "B", "C"}:
             raise ValueError("variant must be A, B or C")
         # Identical seeds give every variant the identical initial outer backbone.
         super().__init__(config, components=1, init_noise=0.0)

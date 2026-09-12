@@ -194,15 +194,15 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
         qm, ql = model.posterior(h, y)
         posterior = model.decode(h, qm)
         shuffled = model.decode(h, qm.roll(1, 0))
+        zero_latent = model.decode(h, torch.zeros_like(qm))
+        prior_mean = model.decode(h, pm)
         prior_pixels = model.decode(h, sample_gaussian(pm, pl, generator)) >= 0
         repeated_context = h[:1].expand(64, -1)
         repeated_mean, repeated_logvar = model.prior(repeated_context)
-        diverse = (
-            model.decode(
-                repeated_context, sample_gaussian(repeated_mean, repeated_logvar, generator)
-            )
-            >= 0
+        diverse_logits = model.decode(
+            repeated_context, sample_gaussian(repeated_mean, repeated_logvar, generator)
         )
+        diverse = diverse_logits >= 0
     weights = []
     for _ in range(4 if smoke else 64):
         z = sample_gaussian(qm, ql, generator)
@@ -259,6 +259,16 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
         shuffled_posterior_latent_bce=float(
             F.binary_cross_entropy_with_logits(shuffled.float(), y.float())
         ),
+        zero_latent_bce=float(F.binary_cross_entropy_with_logits(zero_latent.float(), y.float())),
+        prior_mean_latent_bce=float(
+            F.binary_cross_entropy_with_logits(prior_mean.float(), y.float())
+        ),
+        active_posterior_mean_dimensions=int((qm.float().var(dim=0, unbiased=False) > 0.01).sum()),
+        active_dimension_threshold=0.01,
+        latent_diagnostic_scope=(
+            "Posterior ablations see targets; prior sampling sees context only. "
+            "Neither diversity nor KL alone proves useful latent semantics."
+        ),
         kl_nats_per_glyph=float(gaussian_kl(qm, ql, pm, pl).mean()),
         prior_single_draw_next_grid={
             "exact": float((prior_pixels == correct).flatten(1).all(1).float().mean()),
@@ -273,6 +283,10 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
             "draws": 64,
             "unique_bitmaps": len(set(diversity_keys)),
             "exact_content_glyphs": sum(key in labels for key in diversity_keys),
+            "mean_pixel_probability_std": float(diverse_logits.float().sigmoid().std(0).mean()),
+            "mean_hamming_from_first": float(
+                (diverse[1:] != diverse[:1]).float().flatten(1).sum(1).mean()
+            ),
         },
         generation=result["summary"],
         glyph_similarity=readability,
@@ -285,17 +299,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["toy", "smoke", "full"], default="full")
     parser.add_argument("--toy-steps", type=int, default=2000)
+    parser.add_argument("--smoke-han", type=int, default=8192)
     parser.add_argument("--config", default="configs/experiments/conditional_vae_1m.json")
     args = parser.parse_args()
+    config = json.loads(Path(args.config).read_text())
+    physical_gpu = config.get("gpu", 5)
     if (
-        os.environ.get("CUDA_VISIBLE_DEVICES") != "5"
+        os.environ.get("CUDA_VISIBLE_DEVICES") != str(physical_gpu)
         or os.environ.get("CUDA_DEVICE_ORDER") != "PCI_BUS_ID"
     ):
-        raise RuntimeError("Use physical GPU5 with explicit PCI ordering")
-    config = json.loads(Path(args.config).read_text())
+        raise RuntimeError(f"Use physical GPU{physical_gpu} with explicit PCI ordering")
     cfg = config["training"]
     if args.mode == "smoke":
-        cfg.update(target_han=8192, target_tokens=8192, validation_samples=8)
+        if args.smoke_han <= 0:
+            raise ValueError("Smoke Han budget must be positive")
+        cfg.update(target_han=args.smoke_han, target_tokens=args.smoke_han, validation_samples=8)
+        cfg["warmup_tokens"] = min(cfg["warmup_tokens"], max(1, args.smoke_han // 10))
     if args.mode == "toy":
         config["model"].update(
             hidden_size=64,
@@ -395,6 +414,10 @@ def main():
             save_checkpoint(
                 checkpoints / "best.pt", model, optimizer, scaler, dict(progress), metadata
             )
+        if progress["han"]:
+            save_checkpoint(
+                checkpoints / "latest.pt", model, optimizer, scaler, dict(progress), metadata
+            )
         model.train()
 
     try:
@@ -482,6 +505,8 @@ def main():
                         posterior_bce=recon_sum / (total * 1024),
                         kl_nats_per_glyph=kl_sum / total,
                         beta=beta,
+                        learning_rate=optimizer.param_groups[0]["lr"],
+                        optimizer_update=update,
                     )
                 status("training")
                 if progress["han"] - progress["last_validation_han"] >= cfg["validate_every_han"]:

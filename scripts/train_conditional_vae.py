@@ -227,6 +227,11 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
     tp = int((prior_pixels & correct).sum())
     fp = int((prior_pixels & ~correct).sum())
     fn = int((~prior_pixels & correct).sum())
+    flat = prior_pixels.flatten(1).float()
+    gallery = ds.glyph_bank.flatten(1).to(device=device, dtype=torch.float32)
+    distances = flat.sum(1, keepdim=True) + gallery.sum(1)[None] - 2 * flat @ gallery.T
+    target_ids = torch.stack([r["target_ids"][15:23] for r in records]).flatten().to(device)
+    retrieved = distances.argmin(1)
     diversity_keys = [helpers["bitmap_key"](grid) for grid in diverse.cpu().numpy()]
     result = helpers["generation_summary"](p, g, labels, controls)
     result.update(
@@ -255,7 +260,11 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
         prior_single_draw_next_grid={
             "exact": float((prior_pixels == correct).flatten(1).all(1).float().mean()),
             "foreground_f1": 2 * tp / max(1, 2 * tp + fp + fn),
+            "foreground_dice": 2 * tp / max(1, 2 * tp + fp + fn),
+            "foreground_iou": tp / max(1, tp + fp + fn),
             "hamming": float((prior_pixels != correct).flatten(1).sum(1).float().mean()),
+            "nearest_glyph_top1": float((retrieved == target_ids).float().mean()),
+            "retrieval_scope": "all glyphs and controls; lowest-index ties; scoring only",
         },
         same_context_prior_draws={
             "draws": 64,

@@ -119,6 +119,11 @@ def main():
         with (logs/'training.jsonl').open('a') as f:f.write(json.dumps(row)+'\n')
 
     def save(filename):
+        if filename=='best.pt':
+            path=checkpoints/filename;pending=path.with_suffix('.tmp')
+            torch.save(dict(model=model.state_dict(),metadata=metadata,progress=dict(progress)),pending)
+            pending.replace(path)
+            return
         save_checkpoint(checkpoints/filename,model,optimizer,scaler,dict(progress),metadata)
 
     helpers=runpy.run_path('scripts/evaluate_attention_abc.py')
@@ -155,7 +160,7 @@ def main():
         if progress['best_validation_nll'] is None or result['nll_per_pixel']<progress['best_validation_nll']:
             progress['best_validation_nll']=result['nll_per_pixel'];save('best.pt')
         log('validation',metrics=result,generation=generation())
-        save('latest.pt');model.train();status('language')
+        model.train();status('language')
 
     try:
         status('initializing')
@@ -205,7 +210,7 @@ def main():
         random.seed(seed);np.random.seed(seed);torch.manual_seed(seed)
         optimizer=optimizer_for(model,cfg);scaler=torch.amp.GradScaler('cuda')
         validate()
-        stopped=False
+        stopped=False;last_checkpoint_tokens=0
         while not stopped:
             sampler=SortishEpochSampler(lengths,seed,progress['epoch'],32,progress['cursor'],64)
             loader=DataLoader(dataset,batch_size=32,sampler=sampler,num_workers=2,pin_memory=True,
@@ -238,6 +243,8 @@ def main():
                     log('train',nll=result['nll_sum']/tokens,lr=lr,optimizer=update);status('language')
                 if progress['valid_tokens']-progress['last_validation_tokens']>=protocol['validate_every_targets']:
                     validate()
+                if progress['valid_tokens']-last_checkpoint_tokens>=5000000:
+                    save('latest.pt');last_checkpoint_tokens=progress['valid_tokens']
             if not stopped:
                 progress['epoch']+=1;progress['cursor']=0
         final_budget=True;status('final_validation')

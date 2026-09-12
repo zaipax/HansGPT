@@ -16,7 +16,9 @@ AdamW optimizer: this is a controlled continuation experiment, not an exact resu
 of r1 optimizer momentum. LR warms up over 100K targets to 1e-4, then decays to
 3e-5 at 10M targets; C holds that floor if it runs beyond 10M. Validation and raw
 generation diagnostics run every 1M targets. Initial and final evaluations are
-also saved. Final comparisons use final weights at the budget boundary, avoiding
+also saved. Best snapshots store weights only; optimizer checkpoints are written
+every 5M language targets and at completion to reduce shared-disk contention.
+Final comparisons use final weights at the budget boundary, avoiding
 different best-checkpoint training budgets.
 
 B uniformly samples training-corpus glyphs, batch 256, LR 3e-4, AdamW with no
@@ -55,3 +57,6 @@ test-page continuations, with exact raw bitmap transcription, EOS and repetition
 metrics and PNGs. The 0.5 threshold stays fixed and gallery corrections never
 enter generation. Periodic validation generations are only four fixed chunks;
 their legality must not be presented as an exhaustive generation assessment.
+
+`uv run --frozen python scripts/check_dual_ablation.py` writes the current
+three-arm comparison for hourly monitoring without changing any training process.

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+from pathlib import Path
 
 import torch
 from torch import nn
@@ -95,3 +97,34 @@ class GlyphCodec(nn.Module):
 
     def forward(self, tiles):
         return self.decode(self.encode(tiles))
+
+
+def load_glyph_codec(path, device="cpu", *, expected_sha256=None):
+    """Load the complete immutable codec, including its permanent learned mapping.
+
+    Callers aligning a semantic predictor should pin expected_sha256: equal latent
+    shapes do not imply equal learned coordinate systems across checkpoints.
+    Checkpoints must be trusted artifacts produced by the project trainer.
+    """
+    from hansgpt_research.attention_glyph_lm import AttentionGlyphEncoder
+    from hansgpt_research.dual_decoder_glyph_lm import DualDecoderConfig, SpatialGlyphDecoder
+
+    path = Path(path)
+    with path.open("rb") as handle:
+        identity = hashlib.file_digest(handle, "sha256").hexdigest()
+    if expected_sha256 is not None and identity != expected_sha256:
+        raise ValueError("Codec checkpoint identity mismatch")
+    saved = torch.load(path, map_location="cpu", weights_only=False)
+    metadata = saved["metadata"]
+    base = metadata["base_config"]
+    slots = metadata["config"].get("latent_slots", 4)
+    encoder = AttentionGlyphEncoder(1024, **base["encoder"])
+    decoder = SpatialGlyphDecoder(
+        DualDecoderConfig(**{**base["decoders"], "semantic_slots": slots})
+    )
+    codec = GlyphCodec(metadata["arm"], encoder, decoder)
+    if codec.interface_version != metadata["interface"]:
+        raise ValueError("Codec interface metadata mismatch")
+    codec.load_state_dict(saved["model"], strict=True)
+    codec.checkpoint_sha256 = identity
+    return codec.to(device).requires_grad_(False).eval()

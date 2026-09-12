@@ -1,11 +1,12 @@
 import io
+from dataclasses import asdict
 
 import pytest
 import torch
 
 from hansgpt_research.attention_glyph_lm import AttentionGlyphEncoder
 from hansgpt_research.dual_decoder_glyph_lm import DualDecoderConfig, SpatialGlyphDecoder
-from hansgpt_research.glyph_codec import GlyphCodec
+from hansgpt_research.glyph_codec import GlyphCodec, load_glyph_codec
 
 
 def make(arm, slots=4):
@@ -57,3 +58,32 @@ def test_spatial_queries_and_patch_features_receive_gradients():
     model(torch.randint(2, (2, 1, 32, 32), dtype=torch.uint8)).square().mean().backward()
     assert model.encoder.queries.grad.abs().sum() > 0
     assert model.encoder.patch_projection.weight.grad.abs().sum() > 0
+
+
+def test_public_loader_requires_complete_mapping_and_pins_identity(tmp_path):
+    model = make("fixed").eval()
+    payload = {
+        "model": model.state_dict(),
+        "metadata": {
+            "arm": "fixed",
+            "interface": model.interface_version,
+            "config": {},
+            "base_config": {
+                "encoder": {"width": 128, "layers": 1, "heads": 4},
+                "decoders": asdict(DualDecoderConfig(glyph_layers=1)),
+            },
+        },
+    }
+    path = tmp_path / "codec.pt"
+    torch.save(payload, path)
+    restored = load_glyph_codec(path)
+    tiles = torch.randint(2, (2, 1, 32, 32), dtype=torch.uint8)
+    with torch.no_grad():
+        torch.testing.assert_close(model(tiles), restored(tiles), rtol=0, atol=0)
+    assert not any(p.requires_grad for p in restored.parameters())
+    with pytest.raises(ValueError, match="identity"):
+        load_glyph_codec(path, expected_sha256="0" * 64)
+    del payload["model"]["adapter.0.weight"]
+    torch.save(payload, path)
+    with pytest.raises(RuntimeError):
+        load_glyph_codec(path)

@@ -35,6 +35,80 @@ LEGACY = None
 REPLAY = None
 SETTINGS = None
 HELD = None
+EXPORT_STATE = None
+
+
+def output_schema():
+    return pa.schema(
+        [(name, pa.string()) for name in ("text", "source_page_id", "source_family", "provenance")]
+    )
+
+
+def base_export_job(task):
+    cfg, removed, covered = EXPORT_STATE
+    parent = Path(cfg["parent"])
+    directory = Path(cfg["interim"]) / "base_shards" / str(task["start"])
+    directory.mkdir(parents=True)
+    offsets = np.load(parent / "train.offsets.npy", mmap_mode="r")
+    tokens = np.memmap(parent / "train.uint16", dtype="<u2", mode="r")
+    pf = pq.ParquetFile(parent / "train.parquet")
+    out_offsets = [0]
+    count = task["start"]
+    han = replaced = 0
+    with (
+        (directory / "data.uint16").open("wb", buffering=8 * 2**20) as binary,
+        pq.ParquetWriter(directory / "data.parquet", output_schema(), compression="zstd") as writer,
+    ):
+        for rg in task["groups"]:
+            records = []
+            for r in pf.read_row_group(rg).to_pylist():
+                idx = count
+                count += 1
+                mask = removed[r["parent_start"] : r["parent_start"] + r["parent_count"]]
+                if mask.any():
+                    if not mask.all() or any(
+                        hashlib.sha256(t.encode()).digest() not in covered[r["source_page_id"]]
+                        for t in r["text"].splitlines()
+                    ):
+                        raise ValueError("Independent parent coverage check failed")
+                    replaced += 1
+                    continue
+                ids = tokens[offsets[idx] : offsets[idx + 1]]
+                binary.write(ids.tobytes())
+                out_offsets.append(out_offsets[-1] + len(ids))
+                han += r["han_count"]
+                records.append(
+                    dict(
+                        text=r["text"],
+                        source_page_id=r["source_page_id"],
+                        source_family=r["source_family"],
+                        provenance=json.dumps(
+                            dict(
+                                kind="v2",
+                                parent_start=r["parent_start"],
+                                parent_count=r["parent_count"],
+                            )
+                        ),
+                    )
+                )
+            if records:
+                writer.write_table(pa.Table.from_pylist(records, schema=output_schema()))
+    np.save(directory / "offsets.npy", np.asarray(out_offsets, dtype=np.int64))
+    return dict(path=str(directory), han=han, replaced=replaced)
+
+
+def parquet_jobs(path, rows_per_task=100000):
+    pf = pq.ParquetFile(path)
+    tasks = []
+    count = start = 0
+    groups = []
+    for i in range(pf.num_row_groups):
+        groups.append(i)
+        count += pf.metadata.row_group(i).num_rows
+        if count - start >= rows_per_task or i + 1 == pf.num_row_groups:
+            tasks.append(dict(start=start, groups=groups))
+            start, groups = count, []
+    return tasks
 
 
 def sha(path):
@@ -231,6 +305,7 @@ def verify_candidates(task):
 
 def export(cfg, tasks, output):
     """Replace complete anchored rows only; keep every other original run."""
+    global EXPORT_STATE
     parent = Path(cfg["parent"])
     original = Path(cfg["original"])
     removed = np.zeros(len(np.load(original / "train.offsets.npy")) - 1, dtype=bool)
@@ -262,14 +337,14 @@ def export(cfg, tasks, output):
             stats["replaced_source_rows"] += 1
     np.save(output / "replaced_parent_indices.npy", np.flatnonzero(removed))
     stats["replaced_parent_paragraphs"] = int(removed.sum())
-    schema = pa.schema(
-        [
-            ("text", pa.string()),
-            ("source_page_id", pa.string()),
-            ("source_family", pa.string()),
-            ("provenance", pa.string()),
-        ]
-    )
+    schema = output_schema()
+    EXPORT_STATE = (cfg, removed, covered_lines)
+    jobs = parquet_jobs(parent / "train.parquet")
+    if cfg["smoke"]:
+        jobs = parquet_jobs(parent / "train.parquet", 8192)[:1]
+    print(json.dumps(dict(phase="parallel_base_export", tasks=len(jobs))), flush=True)
+    with ProcessPoolExecutor(max_workers=cfg["workers"], mp_context=mp.get_context("fork")) as pool:
+        base_shards = list(pool.map(base_export_job, jobs))
     offsets = [0]
     han = 0
     buf = []
@@ -297,28 +372,16 @@ def export(cfg, tasks, output):
                 writer.write_table(pa.Table.from_pylist(buf, schema=schema))
                 buf.clear()
 
-        for batch in pq.ParquetFile(parent / "train.parquet").iter_batches(batch_size=8192):
-            for r in batch.to_pylist():
-                mask = removed[r["parent_start"] : r["parent_start"] + r["parent_count"]]
-                if mask.any():
-                    if not mask.all():
-                        raise ValueError("Partial source-row replacement")
-                    if any(
-                        hashlib.sha256(line.encode()).digest()
-                        not in covered_lines[r["source_page_id"]]
-                        for line in r["text"].splitlines()
-                    ):
-                        raise ValueError("Independent parent coverage check failed")
-                    stats["replaced_v2_runs"] += 1
-                    continue
-                emit(
-                    r["text"],
-                    r["source_page_id"],
-                    r["source_family"],
-                    dict(kind="v2", parent_start=r["parent_start"], parent_count=r["parent_count"]),
-                )
-            if cfg["smoke"]:
-                break
+        for shard in base_shards:
+            directory = Path(shard["path"])
+            with (directory / "data.uint16").open("rb") as source:
+                shutil.copyfileobj(source, binary, 8 * 2**20)
+            local = np.load(directory / "offsets.npy")
+            offsets.extend((local[1:] + offsets[-1]).tolist())
+            for batch in pq.ParquetFile(directory / "data.parquet").iter_batches():
+                writer.write_batch(batch)
+            han += shard["han"]
+            stats["replaced_v2_runs"] += shard["replaced"]
         for r in accepted:
             emit(
                 r["text"],
@@ -345,20 +408,33 @@ def export(cfg, tasks, output):
     return dict(stats)
 
 
-def verify_export(output, characters):
+def verify_export_job(task):
+    output, split, job, characters = task
+    offsets = np.load(output / f"{split}.offsets.npy", mmap_mode="r")
+    tokens = np.memmap(output / f"{split}.uint16", dtype="<u2", mode="r")
+    pf = pq.ParquetFile(output / f"{split}.parquet")
+    count = job["start"]
+    for group in job["groups"]:
+        for text in pf.read_row_group(group, columns=["text"]).column(0).to_pylist():
+            expected = [1] + [3 if c == "\n" else characters[c] for c in text] + [2]
+            if not np.array_equal(tokens[offsets[count] : offsets[count + 1]], expected):
+                raise ValueError("Text/glyph mismatch")
+            count += 1
+    return count - job["start"]
+
+
+def verify_export(output, characters, workers=24):
     stats = {}
     for split in ("train", "validation", "test"):
         offsets = np.load(output / f"{split}.offsets.npy")
         tokens = np.memmap(output / f"{split}.uint16", dtype="<u2", mode="r")
         if offsets[0] != 0 or offsets[-1] != len(tokens) or np.any(np.diff(offsets) < 2):
             raise ValueError("Invalid offsets")
-        count = 0
-        for batch in pq.ParquetFile(output / f"{split}.parquet").iter_batches(columns=["text"]):
-            for text in batch.column(0).to_pylist():
-                expected = [1] + [3 if c == "\n" else characters[c] for c in text] + [2]
-                if not np.array_equal(tokens[offsets[count] : offsets[count + 1]], expected):
-                    raise ValueError("Text/glyph mismatch")
-                count += 1
+        jobs = [
+            (output, split, job, characters) for job in parquet_jobs(output / f"{split}.parquet")
+        ]
+        with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("fork")) as pool:
+            count = sum(pool.map(verify_export_job, jobs))
         if count != len(offsets) - 1:
             raise ValueError("Parquet/offset count mismatch")
         stats[split] = packing_statistics(offsets)
@@ -412,6 +488,7 @@ def main():
     files = json.loads(Path("configs/datasets/chinese_multidomain_v1.json").read_text())["files"]
     inventory = json.loads((parent / "glyph_inventory.json").read_text())
     SETTINGS = dict(
+        workers=args.workers,
         smoke=args.smoke,
         parent=str(parent),
         original=str(original),
@@ -464,7 +541,7 @@ def main():
     phase("document_dedup_and_export")
     export_stats = export(SETTINGS, tasks, args.output)
     phase("verify_export_and_packing")
-    statistics = verify_export(args.output, inventory["characters"])
+    statistics = verify_export(args.output, inventory["characters"], args.workers)
     hashes = {path.name: sha(path) for path in args.output.iterdir() if path.is_file()}
     manifest = dict(
         type="chinese_document_packed_v3",

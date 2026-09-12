@@ -1,4 +1,5 @@
 import copy
+import os
 import runpy
 
 import pytest
@@ -68,3 +69,40 @@ def test_nonfinite_statistics_abort_before_backbone_backward():
             autocast_enabled=False,
         )
     assert all(p.grad is None for p in model.backbone.parameters())
+
+
+@pytest.mark.skipif(
+    os.environ.get("HANSGPT_TEST_COMPILE") != "1",
+    reason="Explicit GPU compilation test; run on the experiment GPU",
+)
+def test_compiled_cuda_head_gradients_match_eager():
+    cfg = runpy.run_path("tests/test_conditional_glyph_vae.py")["tiny_config"]()
+    torch.manual_seed(22)
+    eager = ConditionalGlyphVAE(cfg).cuda().train()
+    compiled = copy.deepcopy(eager)
+    h = torch.randn(4, 64, device="cuda", requires_grad=True)
+    features = torch.randn(4, 4, 32, device="cuda", requires_grad=True)
+    h2 = h.detach().clone().requires_grad_(True)
+    f2 = features.detach().clone().requires_grad_(True)
+    targets = torch.randint(2, (4, 1, 32, 32), device="cuda", dtype=torch.uint8)
+    noise = torch.randn(4, 8, device="cuda")
+    valid = torch.tensor([True, True, True, False], device="cuda")
+    results = []
+    for model, hidden, feats, use_compile in [
+        (eager, h, features, False),
+        (compiled, h2, f2, True),
+    ]:
+        kernel = make_head_kernel(model, compiled=use_compile)
+        with torch.autocast("cuda", dtype=torch.float16):
+            rec, kl = kernel(hidden, targets, feats, noise, valid)
+            loss = (rec + 0.7 * kl) / (3 * 1024)
+        loss.backward()
+        results.append(loss.detach())
+    torch.testing.assert_close(results[0], results[1], rtol=0.003, atol=2e-4)
+    torch.testing.assert_close(h.grad, h2.grad, rtol=0.03, atol=2e-4)
+    torch.testing.assert_close(features.grad, f2.grad, rtol=0.03, atol=2e-4)
+    for a, b in zip(eager.parameters(), compiled.parameters(), strict=True):
+        if a.grad is None:
+            assert b.grad is None
+        else:
+            torch.testing.assert_close(a.grad, b.grad, rtol=0.03, atol=2e-4)

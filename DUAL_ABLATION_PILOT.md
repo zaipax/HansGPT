@@ -53,6 +53,8 @@ language cursor state, but automatic phase-aware resume is not implemented.
 
 Outputs use `dual_ablation_pilot_v1_{A,B,C}` under ignored logs, checkpoints and
 reports directories. Final reports include full-test NLL and 32 fixed independent
+test pages with eight teacher-forced predictions each (F1, exact bitmap match,
+retrieval and true-versus-wrong-context NLL), plus the same 32 independent
 test-page continuations, with exact raw bitmap transcription, EOS and repetition
 metrics and PNGs. The 0.5 threshold stays fixed and gallery corrections never
 enter generation. Periodic validation generations are only four fixed chunks;

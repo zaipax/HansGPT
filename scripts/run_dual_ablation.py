@@ -20,6 +20,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from hansgpt_research.glyph_lm import GlyphSequenceDataset, collate_glyph_sequences
+from hansgpt_research.evaluate_structured_glyph_lm import SplitAccumulator
 from hansgpt_research.train_attention_glyph_lm import model_from_config, validate_nll
 from hansgpt_research.train_glyph_lm import (
     SortishEpochSampler, autocast_context, learning_rate, runtime_metadata,
@@ -51,6 +52,28 @@ def budget_decision(spent, b_status):
     if b_status.get('training_budget_final') and spent >= budget:
         return 'stop'
     return 'train' if spent < budget else 'wait'
+
+
+@torch.inference_mode()
+def paired_metrics(model,dataset,count,seed,cfg,device):
+    helpers=runpy.run_path('scripts/evaluate_attention_abc.py')
+    documents,_=helpers['select_documents'](dataset,count,seed)
+    records=[dataset[int(dataset.chunk_offsets[i])] for i in documents]
+    inputs=torch.stack([r['glyphs'][:23] for r in records]).to(device)
+    targets=torch.stack([r['targets'][15:23] for r in records]).reshape(-1,1,32,32).to(device)
+    ids=torch.stack([r['target_ids'][15:23] for r in records]).reshape(-1).to(device)
+    model.eval()
+    with autocast_context(device,cfg['precision']):
+        hidden=model.forward_hidden(inputs)[:,15:23].reshape(-1,model.config.hidden_size)
+        distribution=model.distribution(hidden)
+        nll=distribution.nll(targets)
+        wrong=model.distribution(hidden.roll(8,0)).nll(targets)
+        predicted=model.decode_grid(hidden,threshold=.5)
+    accumulator=SplitAccumulator(dataset,device)
+    accumulator.add(predicted,targets,ids,nll)
+    return dict(scope=f'{count*8} positions from {count} independent test pages',
+                metrics=accumulator.result(),true_context_nll=float(nll.mean()),
+                wrong_page_context_nll=float(wrong.mean()))
 
 
 def main():
@@ -256,9 +279,11 @@ def main():
         # Smoke keeps evaluation small while exercising the final report path.
         if args.smoke:test,test_selection=validation_subset(test,cfg)
         full=validate_nll(model,test,test_selection,cfg,device)
+        paired=paired_metrics(model,datasets['test'],protocol['generation_samples'],seed,cfg,device)
+        write_json(reports/'paired_generation.json',paired)
         generated=generation(final=True)
         receipt=dict(status='complete',arm=args.arm,protocol_sha256=protocol_hash,
-            progress=progress,compute_seconds=compute,full_test=full,generation=generated,
+            progress=progress,compute_seconds=compute,full_test=full,paired_generation=paired,generation=generated,
             final_checkpoint_sha256=sha256(checkpoints/'final.pt'))
         if args.arm=='C':receipt['matched_B_seconds']=json.loads(b_path.read_text())['compute_seconds']
         write_json(reports/'complete.json',receipt);status('finished','complete')

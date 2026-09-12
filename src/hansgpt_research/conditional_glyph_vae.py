@@ -51,6 +51,9 @@ class ConditionalGlyphVAE(nn.Module):
         m = self.config
         lc = LlamaConfig(
             vocab_size=1,
+            bos_token_id=None,
+            eos_token_id=None,
+            pad_token_id=None,
             hidden_size=m.hidden_size,
             num_hidden_layers=m.num_hidden_layers,
             num_attention_heads=m.num_attention_heads,

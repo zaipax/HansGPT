@@ -113,6 +113,10 @@ in `code_history.json`. An exclusive lock prevents concurrent preparers using th
 same intermediate store. Already committed data is retained during the parallel
 upgrade; only uncommitted rows are replayed.
 
+Worker batches stop at 32 rows or 65536 input characters. A larger document runs
+alone as one task, preserving its identity and paragraphs. This avoids assigning
+dozens of multi-million-character poetry collections to a single worker.
+
 | Server path | Contents |
 |---|---|
 | `data/raw/chinese_multidomain_v1/` | Verified original JSONL/Parquet files |

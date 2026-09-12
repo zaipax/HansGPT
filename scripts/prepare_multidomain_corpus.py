@@ -492,21 +492,28 @@ def clean_batch(task):
 
 
 def ordered_clean_rows(
-    executor, path, spec, index, start, *, limit=None, batch_rows=32, prefetch=48
+    executor, path, spec, index, start, *, limit=None, batch_rows=32, prefetch=48,
+    batch_characters=65536,
 ):
     """Bound queued work and consume in exact source order, independent of worker scheduling."""
 
     def tasks():
         batch = []
+        characters = 0
         for row_index, row in enumerate(rows(path, spec["adapter"])):
             if row_index < start:
                 continue
             if limit is not None and row_index >= limit:
                 break
-            batch.append((row_index, row))
-            if len(batch) == batch_rows:
+            size = sum(len(value) for value in row.values() if isinstance(value, str))
+            if batch and characters + size > batch_characters:
                 yield index, spec, batch
-                batch = []
+                batch, characters = [], 0
+            batch.append((row_index, row))
+            characters += size
+            if len(batch) == batch_rows or characters >= batch_characters:
+                yield index, spec, batch
+                batch, characters = [], 0
         if batch:
             yield index, spec, batch
 

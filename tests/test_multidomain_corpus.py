@@ -161,6 +161,29 @@ def test_optimized_global_near_dedup_matches_original_store(tmp_path):
     new.close()
 
 
+def test_large_documents_are_distributed_without_splitting_identity(tmp_path):
+    from concurrent.futures import Future
+
+    batches = []
+
+    class CapturingExecutor:
+        def submit(self, function, task):
+            batches.append(task[2])
+            result = Future()
+            result.set_result(task[2])
+            return result
+
+    rows = [{"text": "汉" * n} for n in [10, 10, 100, 100, 10]]
+    path = tmp_path / "large.jsonl"
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    actual = list(corpus.ordered_clean_rows(
+        CapturingExecutor(), path, {"adapter": "jsonl_text"}, 0, 0,
+        batch_rows=32, batch_characters=50, prefetch=3,
+    ))
+    assert actual == list(enumerate(rows))
+    assert [len(batch) for batch in batches] == [2, 1, 1, 1]
+
+
 def test_parallel_cleaning_keeps_original_row_order_and_content(tmp_path):
 
     rows = [

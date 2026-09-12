@@ -153,7 +153,7 @@ def toy(model, ds, output, steps):
         other=len(raw) - sum(counts),
         prior_valid_rate=sum(counts) / len(raw),
         posterior_sample_exact=float((oracle == y).flatten(1).all(1).float().mean()),
-        zero_latent_unique_bitmaps=int(torch.unique(zero.flatten(1), dim=0).shape[0]),
+        prior_mean_unique_bitmaps=int(torch.unique(zero.flatten(1), dim=0).shape[0]),
         analytic_pixel_mean_matches_either=bool(any(torch.equal(averaged, t) for t in targets)),
         mechanism_passed=min(counts) >= len(raw) * 0.05 and sum(counts) >= len(raw) * 0.8,
         scope="Independent random-init toy; no weights transfer to the corpus experiment",
@@ -192,6 +192,15 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
         qm, ql = model.posterior(h, y)
         posterior = model.decode(h, qm)
         shuffled = model.decode(h, qm.roll(1, 0))
+        prior_pixels = model.decode(h, sample_gaussian(pm, pl, generator)) >= 0
+        repeated_context = h[:1].expand(64, -1)
+        repeated_mean, repeated_logvar = model.prior(repeated_context)
+        diverse = (
+            model.decode(
+                repeated_context, sample_gaussian(repeated_mean, repeated_logvar, generator)
+            )
+            >= 0
+        )
     weights = []
     for _ in range(4 if smoke else 64):
         z = sample_gaussian(qm, ql, generator)
@@ -214,6 +223,11 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
         )
     p, g = x[:, :16].cpu().numpy(), generated.cpu().numpy()
     labels, controls = helpers["label_lookup"](ds)
+    correct = y.bool()
+    tp = int((prior_pixels & correct).sum())
+    fp = int((prior_pixels & ~correct).sum())
+    fn = int((~prior_pixels & correct).sum())
+    diversity_keys = [helpers["bitmap_key"](grid) for grid in diverse.cpu().numpy()]
     result = helpers["generation_summary"](p, g, labels, controls)
     result.update(
         protocol=f"{count} test pages; one prior z per glyph; threshold .5; raw feedback only",
@@ -238,6 +252,16 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
             F.binary_cross_entropy_with_logits(shuffled.float(), y.float())
         ),
         kl_nats_per_glyph=float(gaussian_kl(qm, ql, pm, pl).mean()),
+        prior_single_draw_next_grid={
+            "exact": float((prior_pixels == correct).flatten(1).all(1).float().mean()),
+            "foreground_f1": 2 * tp / max(1, 2 * tp + fp + fn),
+            "hamming": float((prior_pixels != correct).flatten(1).sum(1).float().mean()),
+        },
+        same_context_prior_draws={
+            "draws": 64,
+            "unique_bitmaps": len(set(diversity_keys)),
+            "exact_content_glyphs": sum(key in labels for key in diversity_keys),
+        },
         generation=result["summary"],
     )
     write_json(output / "prior_evaluation.json", evidence)

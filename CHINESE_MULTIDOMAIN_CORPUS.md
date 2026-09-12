@@ -41,6 +41,9 @@ redistribute all underlying texts. No raw corpus is committed to Git.
 - Instruction/input/answer fields are accepted or rejected together. Passing pairs
   use explicit Chinese `问：…补充：…答：…` markers. Original adjacent lines may lose
   formatting, but no rejected answer/question fragment is spliced into another.
+  Markdown heading/bold markers and punctuation-adjacent whitespace are formatting
+  only; their Chinese content is retained. Digits or Latin content still reject
+  the entire pair. The current smoke version is `chinese_multidomain_smoke_v2`.
 - Only font-supported, nonempty, unclipped glyphs from the existing pinned Noto
   font are used. The 32x32 binary rendering and four control glyphs stay compatible.
 

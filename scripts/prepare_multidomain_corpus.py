@@ -109,11 +109,20 @@ def qa_text(row, converter):
         value = row.get(name, "")
         if not isinstance(value, str):
             return None
-        parts = [
-            unicodedata.normalize("NFC", line).translate(PUNCTUATION_MAP).strip()
-            for line in value.splitlines()
-            if line.strip()
-        ]
+        parts = []
+        for line in value.splitlines():
+            text = unicodedata.normalize("NFC", line).translate(PUNCTUATION_MAP).strip()
+            if not text:
+                continue
+            heading = bool(regex.match(r"^#{1,6}\s+", text))
+            text = regex.sub(r"^#{1,6}\s+", "", text)
+            text = regex.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+            # Only punctuation-adjacent spacing is formatting; substantive content stays.
+            text = regex.sub(r"(?<=[，。！？；：、])[ \t\u3000]+", "", text)
+            text = regex.sub(r"[ \t\u3000]+(?=[，。！？；：、])", "", text)
+            if heading and text[-1] not in "：。！？":
+                text += "："
+            parts.append(text)
         if any(not ALLOWED.fullmatch(line) or artifact_reason(line) for line in parts):
             return None
         values.append(converter.convert("".join(parts)))

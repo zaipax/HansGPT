@@ -6,14 +6,14 @@ export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=2
 mode=${1:?smoke or full}
 [[ "$mode" == smoke || "$mode" == full ]] || exit 2
 name=chinese_multidomain_v1
-[[ "$mode" == smoke ]] && name=chinese_multidomain_smoke_v1
+[[ "$mode" == smoke ]] && name=chinese_multidomain_smoke_v2
 [[ -z "$(git status --porcelain)" ]] || exit 2
 if [[ "$mode" == full ]]; then
   uv run --frozen python - <<'PY'
 import json,subprocess
 from pathlib import Path
 from hansgpt_research.prepare_corpus import digest_file
-p=Path('data/processed/chinese_multidomain_smoke_v1')
+p=Path('data/processed/chinese_multidomain_smoke_v2')
 r=json.loads((p/'verification.json').read_text())
 m=json.loads((p/'manifest.json').read_text())
 assert r['passed'] and r['manifest_sha256']==digest_file(p/'manifest.json')

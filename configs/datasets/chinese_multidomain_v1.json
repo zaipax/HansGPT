@@ -97,7 +97,7 @@
       "family": "finance",
       "adapter": "jsonl_qa",
       "domain_hint": "金融与经济",
-      "smoke": true
+      "smoke": false
     },
     {
       "dataset": "AI-ModelScope/COIG-CQIA",
@@ -109,7 +109,7 @@
       "family": "finance",
       "adapter": "jsonl_qa",
       "domain_hint": "金融与经济",
-      "smoke": false
+      "smoke": true
     },
     {
       "dataset": "AI-ModelScope/COIG-CQIA",

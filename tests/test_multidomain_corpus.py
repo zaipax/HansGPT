@@ -22,6 +22,19 @@ def test_complete_qa_preserves_roles_and_adjacency():
     )
 
 
+def test_qa_markdown_formatting_is_removed_without_dropping_content():
+    row = {
+        "instruction": "请介绍这种症状。",
+        "output": "## 症状\n**头痛**是常见症状。 还可能出现疲劳。",
+    }
+    assert (
+        helpers["qa_text"](row, OpenCC("t2s"))
+        == "问：请介绍这种症状。答：症状：头痛是常见症状。还可能出现疲劳。"
+    )
+    row["output"] += "患者年龄为25岁。"
+    assert helpers["qa_text"](row, OpenCC("t2s")) is None
+
+
 def test_rejected_prose_line_is_not_joined_into_surrounding_paragraphs():
     first = "这是一段完整的中文说明文字，用来测试段落边界是否能够得到保留。"
     second = "另一段说明文字也应该独立存在，不能因为中间内容被删除而拼接起来。"

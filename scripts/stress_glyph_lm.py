@@ -12,7 +12,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from hansgpt_research.glyph_lm import GlyphGPT, ModelConfig, pixel_bce_loss
+from hansgpt_research.glyph_lm import (
+    GlyphGPT,
+    ModelConfig,
+    normalize_control_inventory,
+    pixel_bce_loss,
+)
 from hansgpt_research.train_glyph_lm import runtime_metadata, sha256, write_json
 
 
@@ -131,7 +136,7 @@ def stress(args: argparse.Namespace) -> None:
         bank = torch.from_numpy(np.array(bitmaps, dtype=np.uint8, copy=True)).to(device)
         report["glyph_assets"] = len(bank)
         inventory = json.loads((data_dir / "glyph_inventory.json").read_text(encoding="utf-8"))
-        controls = {name: int(index) for index, name in inventory["controls"].items()}
+        controls = normalize_control_inventory(inventory["controls"])
         allowed = sorted(set(inventory["characters"].values()) - set(controls.values()))
         content_ids = torch.tensor(allowed, dtype=torch.long, device=device)
         report["sampling_exclusions"] = {

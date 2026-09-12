@@ -18,7 +18,12 @@ from PIL import Image, ImageDraw
 from torch import Tensor, nn
 
 from hansgpt_research.evaluate_glyph_lm import target_frequencies
-from hansgpt_research.glyph_lm import GlyphEncoder, GlyphSequenceDataset, ModelConfig
+from hansgpt_research.glyph_lm import (
+    GlyphEncoder,
+    GlyphSequenceDataset,
+    ModelConfig,
+    normalize_control_inventory,
+)
 from hansgpt_research.train_glyph_lm import autocast_context, runtime_metadata, sha256, write_json
 from hansgpt_research.train_structured_glyph_lm import complete_optimizer_step
 
@@ -54,7 +59,7 @@ def select_decoder_glyphs(
         raise ValueError("Glyph bank must contain only binary pixels")
     if len(train_counts) != len(bitmaps) or np.any(train_counts < 0):
         raise ValueError("Training frequencies must align with the glyph bank")
-    controls = {int(index) for index in inventory["controls"]}
+    controls = set(normalize_control_inventory(inventory["controls"]).values())
     content = sorted({int(index) for index in inventory["characters"].values()} - controls)
     eligible = [index for index in content if train_counts[index] > 0]
     excluded = [index for index in content if train_counts[index] == 0]

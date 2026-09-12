@@ -62,3 +62,14 @@ def test_prompt_selection_is_deterministic_and_page_disjoint(monkeypatch):
     first = helpers["select_documents"](dataset, 4, 123)
     assert first == helpers["select_documents"](dataset, 4, 123)
     assert len(set(first[1])) == 4
+
+
+def test_phrase_cycles_longer_than_four_glyphs_are_reported_separately():
+    key = helpers["bitmap_key"]
+    pattern = [grid(n * 8) for n in range(1, 7)]
+    sequence = np.array([pattern * 8])
+    result = helpers["generation_summary"](
+        sequence[:, :1], sequence, {key(g): [str(i)] for i, g in enumerate(pattern)}, {}
+    )
+    assert result["summary"]["exact_cycle_samples"] == 0
+    assert result["summary"]["phrase_cycle_samples"] == 1

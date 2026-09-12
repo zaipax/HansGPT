@@ -86,6 +86,7 @@ def generation_summary(prompt, generated, labels, controls):
         "adjacent_pairs": 0,
         "exact_cycle_samples": 0,
         "near_cycle_samples": 0,
+        "phrase_cycle_samples": 0,
     }
     for index, (prefix, output) in enumerate(zip(prompt, generated, strict=True)):
         keys = [bitmap_key(grid) for grid in output]
@@ -97,6 +98,7 @@ def generation_summary(prompt, generated, labels, controls):
         repeats = sum(a == b for a, b in zip(body_keys[:-1], body_keys[1:], strict=True))
         exact_repetition = repetition_metrics(body, near_hamming=0)
         near_repetition = repetition_metrics(body, near_hamming=4)
+        phrase_repetition = repetition_metrics(body, near_hamming=0, max_period=16)
         summaries.append(
             {
                 "sample": index,
@@ -108,6 +110,7 @@ def generation_summary(prompt, generated, labels, controls):
                 "adjacent_repeat_rate": repeats / pairs if pairs else 0,
                 "exact_repetition": exact_repetition,
                 "near_repetition": near_repetition,
+                "phrase_repetition": phrase_repetition,
             }
         )
         totals["body_grids"] += len(body)
@@ -120,6 +123,7 @@ def generation_summary(prompt, generated, labels, controls):
         totals["adjacent_pairs"] += pairs
         totals["exact_cycle_samples"] += int(exact_repetition["has_short_cycle"])
         totals["near_cycle_samples"] += int(near_repetition["has_short_cycle"])
+        totals["phrase_cycle_samples"] += int(phrase_repetition["has_short_cycle"])
     totals["exact_content_rate"] = totals["exact_content_grids"] / max(1, totals["body_grids"])
     totals["adjacent_repeat_rate"] = totals["repeated_adjacent_pairs"] / max(
         1, totals["adjacent_pairs"]

@@ -43,7 +43,15 @@ redistribute all underlying texts. No raw corpus is committed to Git.
   formatting, but no rejected answer/question fragment is spliced into another.
   Markdown heading/bold markers and punctuation-adjacent whitespace are formatting
   only; their Chinese content is retained. Digits or Latin content still reject
-  the entire pair. The current smoke version is `chinese_multidomain_smoke_v2`.
+  the entire pair. The current smoke version is `chinese_multidomain_smoke_v3`.
+- Template-prompted encyclopedia articles (MBA, medical entries and agriculture)
+  use a separate article adapter. Each passing complete paragraph is exported
+  with its original Chinese topic and explicit `资料摘录：` marker. Rejected
+  paragraphs are never concatenated; these excerpts are not presented as complete
+  answers. Genuine Q&A sources retain the all-or-nothing pair policy above.
+- Already-simplified text skips OpenCC only if no changed dictionary mapping can
+  occur. A conservative trigger set is derived from the installed dictionaries;
+  all other text uses the original converter. Equivalence tests cover every key.
 - Only font-supported, nonempty, unclipped glyphs from the existing pinned Noto
   font are used. The 32x32 binary rendering and four control glyphs stay compatible.
 

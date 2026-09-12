@@ -107,7 +107,7 @@
       "revision": "7126866ea243d43c3d11ba4111f688eb5e017c97",
       "revision_policy": "file commit",
       "family": "finance",
-      "adapter": "jsonl_qa",
+      "adapter": "jsonl_article",
       "domain_hint": "金融与经济",
       "smoke": true
     },
@@ -119,7 +119,7 @@
       "revision": "7126866ea243d43c3d11ba4111f688eb5e017c97",
       "revision_policy": "file commit",
       "family": "medicine",
-      "adapter": "jsonl_qa",
+      "adapter": "jsonl_article",
       "domain_hint": "医疗与健康",
       "smoke": true
     },
@@ -131,7 +131,7 @@
       "revision": "7126866ea243d43c3d11ba4111f688eb5e017c97",
       "revision_policy": "file commit",
       "family": "medicine",
-      "adapter": "jsonl_qa",
+      "adapter": "jsonl_article",
       "domain_hint": "医疗与健康",
       "smoke": false
     },
@@ -143,7 +143,7 @@
       "revision": "7126866ea243d43c3d11ba4111f688eb5e017c97",
       "revision_policy": "file commit",
       "family": "agriculture",
-      "adapter": "jsonl_qa",
+      "adapter": "jsonl_article",
       "domain_hint": "农业",
       "smoke": false
     },

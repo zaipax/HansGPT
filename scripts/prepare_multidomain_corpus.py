@@ -102,30 +102,64 @@ def quality_reason(text):
     return "unbalanced_delimiters" if stack else None
 
 
+class FastOpenCC:
+    """Skip conversion only when no changed mapping can occur in the input.
+
+    Inspect the installed, pinned OpenCC dictionaries once. Every differing source
+    character is a trigger; changed-length mappings conservatively use the whole
+    source key. Otherwise delegate to the original converter without approximation.
+    """
+
+    def __init__(self):
+        self.converter = OpenCC("t2s")
+        self.converter.convert("漢字")
+        self.triggers = set()
+        for _, _, mappings in self.converter.dict_cache.values():
+            for source, alternatives in mappings.items():
+                target = alternatives.split(" ")[0]
+                if len(source) == len(target):
+                    self.triggers.update(a for a, b in zip(source, target, strict=True) if a != b)
+                elif source != target:
+                    self.triggers.update(source)
+
+    def convert(self, text):
+        return text if self.triggers.isdisjoint(text) else self.converter.convert(text)
+
+
+def normalized_lines(value):
+    if not isinstance(value, str):
+        return None
+    parts = []
+    for line in value.splitlines():
+        text = unicodedata.normalize("NFC", line).translate(PUNCTUATION_MAP).strip()
+        if not text:
+            continue
+        heading = bool(regex.match(r"^#{1,6}\s+", text))
+        text = regex.sub(r"^#{1,6}\s+", "", text)
+        text = regex.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+        text = regex.sub(r"(?<=[，。！？；：、])[ \t\u3000]+", "", text)
+        text = regex.sub(r"[ \t\u3000]+(?=[，。！？；：、])", "", text)
+        if heading and text[-1] not in "：。！？":
+            text += "："
+        parts.append(text)
+    return parts
+
+
+def pure_field(value, converter):
+    parts = normalized_lines(value)
+    if parts is None or any(not ALLOWED.fullmatch(line) or artifact_reason(line) for line in parts):
+        return None
+    return converter.convert("".join(parts))
+
+
 def qa_text(row, converter):
     """Keep the entire Q/A pair; never salvage an answer after deleting a mixed-script question."""
     values = []
     for name in ("instruction", "input", "output"):
-        value = row.get(name, "")
-        if not isinstance(value, str):
+        value = pure_field(row.get(name, ""), converter)
+        if value is None:
             return None
-        parts = []
-        for line in value.splitlines():
-            text = unicodedata.normalize("NFC", line).translate(PUNCTUATION_MAP).strip()
-            if not text:
-                continue
-            heading = bool(regex.match(r"^#{1,6}\s+", text))
-            text = regex.sub(r"^#{1,6}\s+", "", text)
-            text = regex.sub(r"\*\*([^*]+)\*\*", r"\1", text)
-            # Only punctuation-adjacent spacing is formatting; substantive content stays.
-            text = regex.sub(r"(?<=[，。！？；：、])[ \t\u3000]+", "", text)
-            text = regex.sub(r"[ \t\u3000]+(?=[，。！？；：、])", "", text)
-            if heading and text[-1] not in "：。！？":
-                text += "："
-            parts.append(text)
-        if any(not ALLOWED.fullmatch(line) or artifact_reason(line) for line in parts):
-            return None
-        values.append(converter.convert("".join(parts)))
+        values.append(value)
     question, extra, answer = values
     if not question or not answer:
         return None
@@ -140,6 +174,23 @@ def cleaned_units(row, spec, converter, stats):
             stats["rejected_whole_qa_pair"] += 1
             return []
         candidates = [text] if len(text) <= 4096 and len(HAN.findall(text)) >= 20 else []
+    elif spec["adapter"] == "jsonl_article":
+        topic = pure_field(row.get("instruction", ""), converter)
+        extra = pure_field(row.get("input", ""), converter)
+        body = normalized_lines(row.get("output"))
+        if not topic or extra is None or body is None:
+            stats["rejected_article_topic"] += 1
+            return []
+        paragraphs = clean_paragraphs(
+            "\n".join(body), converter, stats, min_han=20, max_length=3500, wikitext=False
+        )
+        prefix = "主题：" + topic + ("补充：" + extra if extra else "") + "资料摘录："
+        candidates = [
+            prefix + paragraph
+            for paragraph in paragraphs
+            if len(prefix + paragraph) <= 4096 and not quality_reason(paragraph)
+        ]
+        stats["encyclopedia_excerpts"] += len(candidates)
     else:
         raw = row.get("text")
         if not isinstance(raw, str):
@@ -249,6 +300,19 @@ class ResumableStore(CorpusStore):
         return self.connection.execute(
             "SELECT 1 FROM exclusions WHERE hash=?", (hashed,)
         ).fetchone()
+
+    def add_with_body(self, record, body, stats):
+        if body == record["text"]:
+            return self.add(record, stats)
+        indexed = {**record, "text": body, "text_sha256": hashlib.sha256(body.encode()).hexdigest()}
+        if not self.add(indexed, stats):
+            return False
+        key = hashlib.sha256(canonical_han(body).encode()).hexdigest()
+        self.connection.execute(
+            "UPDATE records SET payload=? WHERE canonical_hash=?",
+            (json.dumps(record, ensure_ascii=False), key),
+        )
+        return True
 
 
 def seed_exclusions(store, state, old):
@@ -447,7 +511,7 @@ def main():
         if args.mode == "full" and not state["seeded"]:
             status("seeding_existing_corpus_exclusions")
             seed_exclusions(store, state, Path("data/processed/modelscope_zhwiki_full_v1"))
-        converter = OpenCC("t2s")
+        converter = FastOpenCC()
         font = ImageFont.truetype(str(font_path), size=26)
         valid_chars, bad_chars = set(state["characters"]), set(state["bad_characters"])
         checked_chars = set(valid_chars)
@@ -489,7 +553,7 @@ def main():
                         break
                     text_identity = (
                         row.get("text")
-                        if spec["adapter"] != "jsonl_qa"
+                        if spec["adapter"] in {"jsonl_text", "parquet_text"}
                         else json.dumps(
                             {k: row.get(k, "") for k in ("instruction", "input", "output")},
                             ensure_ascii=False,
@@ -499,7 +563,12 @@ def main():
                     for unit_index, text in enumerate(cleaned_units(row, spec, converter, stats)):
                         if family_han[family] >= CAPS[family]:
                             break
-                        if store.excluded(text):
+                        original_body = (
+                            text.split("资料摘录：", 1)[1]
+                            if spec["adapter"] == "jsonl_article"
+                            else text
+                        )
+                        if store.excluded(text) or store.excluded(original_body):
                             stats["rejected_existing_wikipedia_exact"] += 1
                             continue
                         chars = set(text)
@@ -544,7 +613,7 @@ def main():
                             "han_count": len(HAN.findall(text)),
                             "split": split_for_page(page_id, 20260915),
                         }
-                        if store.add(record, stats):
+                        if store.add_with_body(record, original_body, stats):
                             family_han[family] += record["han_count"]
                             valid_chars.update(chars)
                             stats["retained_paragraphs"] += 1

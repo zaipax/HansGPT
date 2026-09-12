@@ -74,3 +74,37 @@ def test_resume_preserves_committed_dedup_state(tmp_path):
     assert not resumed.add(row, Counter())
     assert list(resumed.records("train")) == [row]
     resumed.close()
+
+
+def test_article_excerpts_keep_topic_and_never_join_across_rejected_paragraphs():
+    first = "所有者权益反映所有者对企业资产的剩余索取权，是企业财务分析的重要内容。"
+    second = "企业的资产和负债会随着经营活动发生变化，分析时应当结合完整的财务资料。"
+    row = {"instruction": "请介绍所有者权益。", "output": first + "\n数值为25%的段落。\n" + second}
+    result = helpers["cleaned_units"](
+        row, {"adapter": "jsonl_article", "family": "finance"}, OpenCC("t2s"), Counter()
+    )
+    prefix = "主题：请介绍所有者权益。资料摘录："
+    assert result == [prefix + first, prefix + second]
+    assert all("答：" not in value for value in result)
+
+
+def test_fast_converter_matches_every_dictionary_key_and_joined_contexts():
+    fast = helpers["FastOpenCC"]()
+    reference = OpenCC("t2s")
+    keys = [key for _, _, table in fast.converter.dict_cache.values() for key in table]
+    for key in keys:
+        assert fast.convert(key) == reference.convert(key)
+    for start in range(0, len(keys), 31):
+        text = "这是上下文。" + "".join(keys[start : start + 31]) + "一句完整的话。"
+        assert fast.convert(text) == reference.convert(text)
+
+
+def test_article_context_prefix_cannot_hide_duplicate_body(tmp_path):
+    store = helpers["ResumableStore"](tmp_path / "articles.sqlite")
+    body = "企业财务分析需要结合完整的财务资料，才能更准确地了解企业的经营情况。"
+    first = {"text": "主题：财务。资料摘录：" + body, "text_sha256": "first", "split": "train"}
+    second = {"text": "主题：经营。资料摘录：" + body, "text_sha256": "second", "split": "test"}
+    assert store.add_with_body(first, body, Counter())
+    assert not store.add_with_body(second, body, Counter())
+    assert list(store.records("train")) == [first]
+    store.close()

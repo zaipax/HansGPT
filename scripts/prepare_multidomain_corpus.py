@@ -615,6 +615,7 @@ def export(store, state, output, font_path, source_config, config_hash, args):
             "workers": args.workers,
             "batch_rows": args.batch_rows,
             "sqlite_cache_mib": args.cache_mib,
+            "commit_rows": args.commit_rows,
             "code_history": args.code_history,
             "merge_order": "original source order; global exact/near dedup",
         },
@@ -657,10 +658,13 @@ def main():
     parser.add_argument("--workers", type=int, default=24)
     parser.add_argument("--batch-rows", type=int, default=32)
     parser.add_argument("--cache-mib", type=int, default=8192)
+    parser.add_argument("--commit-rows", type=int, default=10000)
     parser.add_argument("--upgrade-from-script-sha256")
     args = parser.parse_args()
     if not 1 <= args.workers <= 64 or not 1 <= args.batch_rows <= 512 or args.cache_mib < 64:
         raise ValueError("Invalid worker, chunk or cache configuration")
+    if not 1 <= args.commit_rows <= 100000:
+        raise ValueError("commit-rows must be between 1 and 100000")
     if subprocess.check_output(["git", "status", "--porcelain"], text=True).strip():
         raise RuntimeError("Prepare data only from clean committed source")
     if args.output.resolve() == Path("data/processed/modelscope_zhwiki_full_v1").resolve():
@@ -763,6 +767,7 @@ def main():
                 family_han=dict(family_han),
                 workers=args.workers,
                 sqlite_cache_mib=args.cache_mib,
+                commit_rows=args.commit_rows,
                 processing_han_per_second=(sum(family_han.values()) - initial_han)
                 / max(1, time.monotonic() - started),
             )
@@ -814,7 +819,7 @@ def main():
                             stats["retained_paragraphs"] += 1
                     state["row"] = row_index + 1
                     seen = row_index + 1
-                    if state["row"] % 1000 == 0:
+                    if state["row"] % args.commit_rows == 0:
                         commit_state()
                 cleaned.close()
                 if args.mode == "smoke" and seen >= 200:

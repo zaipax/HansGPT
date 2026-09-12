@@ -83,6 +83,24 @@ def test_resume_preserves_committed_dedup_state(tmp_path):
     resumed.close()
 
 
+def test_pending_transaction_rolls_back_records_and_resume_cursor(tmp_path):
+    path = tmp_path / "rollback.sqlite"
+    store = corpus.ResumableStore(path, cache_mib=64)
+    state = store.state()
+    state["row"] = 10000
+    store.save_state(state)
+    text = "这是一段完整的中文测试内容，用于检查中断后能否重新处理未提交的记录。"
+    record = {"text": text, "text_sha256": "pending", "split": "train"}
+    assert store.add_with_body(record, text, Counter())
+    # Simulate interruption inside the next row: close without committing.
+    store.connection.close()
+    resumed = corpus.ResumableStore(path, cache_mib=64)
+    assert resumed.state()["row"] == 10000
+    assert list(resumed.records("train")) == []
+    assert resumed.add_with_body(record, text, Counter())
+    resumed.connection.close()
+
+
 def test_article_excerpts_keep_topic_and_never_join_across_rejected_paragraphs():
     first = "所有者权益反映所有者对企业资产的剩余索取权，是企业财务分析的重要内容。"
     second = "企业的资产和负债会随着经营活动发生变化，分析时应当结合完整的财务资料。"

@@ -102,6 +102,11 @@ Processing saves its source cursor and dedup/statistics state in one SQLite
 transaction. For interrupted preparation, rerun the preparation command with
 the same paths/configuration and `--resume`, then run the verifier separately.
 Worker/cache settings can change without changing data semantics. A code upgrade
+can also change `--commit-rows` (default 10000, formerly 1000). Larger transactions
+reduce repeated index writes; file boundaries still commit. Progress reports show
+committed counts, so they update less often. Interruption replays at most the
+pending transaction; records and the source cursor always commit together.
+A code upgrade
 requires `--resume --upgrade-from-script-sha256 <exact previous script hash>`;
 all data identity fields must remain equal and the old/new identities are recorded
 in `code_history.json`. An exclusive lock prevents concurrent preparers using the

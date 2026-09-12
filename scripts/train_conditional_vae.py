@@ -22,6 +22,7 @@ from hansgpt_research.conditional_glyph_vae import (
     sample_gaussian,
 )
 from hansgpt_research.glyph_lm import GlyphSequenceDataset, collate_glyph_sequences
+from hansgpt_research.glyph_readability import analyze_readability
 from hansgpt_research.train_glyph_lm import (
     SortishEpochSampler,
     learning_rate,
@@ -238,6 +239,7 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
         protocol=f"{count} test pages; one prior z per glyph; threshold .5; raw feedback only",
         source_pages=pages,
     )
+    readability = analyze_readability(ds, p, g, result["samples"], output, device)
     write_json(output / "generation.json", result)
     np.savez_compressed(output / "generation.npz", prompts=p, generated=g)
     for start in range(0, count, 4):
@@ -272,6 +274,7 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
             "exact_content_glyphs": sum(key in labels for key in diversity_keys),
         },
         generation=result["summary"],
+        glyph_similarity=readability,
     )
     write_json(output / "prior_evaluation.json", evidence)
     return evidence
@@ -281,13 +284,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["toy", "smoke", "full"], default="full")
     parser.add_argument("--toy-steps", type=int, default=2000)
+    parser.add_argument("--config", default="configs/experiments/conditional_vae_1m.json")
     args = parser.parse_args()
     if (
         os.environ.get("CUDA_VISIBLE_DEVICES") != "5"
         or os.environ.get("CUDA_DEVICE_ORDER") != "PCI_BUS_ID"
     ):
         raise RuntimeError("Use physical GPU5 with explicit PCI ordering")
-    config = json.loads(Path("configs/experiments/conditional_vae_1m.json").read_text())
+    config = json.loads(Path(args.config).read_text())
     cfg = config["training"]
     if args.mode == "smoke":
         cfg.update(target_han=8192, target_tokens=8192, validation_samples=8)
@@ -323,6 +327,7 @@ def main():
         parameters=sum(p.numel() for p in model.parameters()),
         trainable_parameters=sum(p.numel() for p in model.parameters() if p.requires_grad),
         mode=args.mode,
+        config_file_sha256=sha256(Path(args.config)),
         objective="(pixel BCE sum + beta * KL(q||p)) / 1024; beta warms up by successful Han count",
         budget="successful Han next-glyph targets; punctuation/EOS trained and counted separately",
     )
@@ -365,6 +370,7 @@ def main():
                 progress=progress,
                 target_han=cfg["target_han"],
                 seconds=time.monotonic() - started,
+                peak_cuda_memory_bytes=torch.cuda.max_memory_allocated(device),
                 **extra,
             ),
         )

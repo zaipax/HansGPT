@@ -188,12 +188,19 @@ def document_segments(raw, converter, inventory, legacy, section, stats):
             stats["hard_break_" + reason] += 1
             flush()
             continue
-        if section.match(text):
+        if document_boundary(text, section):
             stats["section_break"] += 1
             flush()
         segment.append((line_id, text))
     flush()
     return result
+
+
+def document_boundary(text, section):
+    """Bracketed article titles in composition anthologies start new documents."""
+    return bool(section.match(text)) or (
+        text.startswith("【") and text.endswith("】") and len(text) <= 80
+    )
 
 
 def worker(task):
@@ -297,6 +304,8 @@ def verify_candidates(task):
                 raise ValueError("Raw interval proof failed")
             if any(not ALLOWED.fullmatch(x) or artifact_reason(x) for x in normalized):
                 raise ValueError("Invalid raw interval")
+            if any(document_boundary(x, REPLAY["SECTION"]) for x in normalized[1:]):
+                raise ValueError("Interval crosses article heading")
             verified += 1
     if verified != len(records):
         raise ValueError("Missing raw records")

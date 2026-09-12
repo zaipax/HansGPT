@@ -59,6 +59,19 @@ def test_heldout_near_index_checks_punctuation_variants_and_near_copies():
     assert not idx.matches("科学实验必须认真记录数据并且验证结果")
 
 
+def test_bracketed_anthology_titles_are_document_boundaries():
+    code = runpy.run_path("scripts/prepare_document_corpus.py")
+    legacy = runpy.run_path("scripts/prepare_multidomain_corpus.py")
+    replay = runpy.run_path("scripts/reorganize_corpus.py")
+    first = "春天的风吹过这片广阔的大地，山上的树木终于慢慢长出了新的叶子。"
+    second = "【秋天的故事】\n这一段描述秋天的景色，远处的山林已经染上了金色。"
+    raw = first + "\n" + second
+    result = code["document_segments"](
+        raw, legacy["FastOpenCC"](), set(raw), legacy, replay["SECTION"], Counter()
+    )
+    assert ["\n".join(t for _, t in s) for s in result] == [first, second]
+
+
 def test_explicit_new_corpus_requires_pinned_full_identity(tmp_path, monkeypatch):
     import hansgpt_research.train_glyph_lm as training
 

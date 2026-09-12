@@ -415,6 +415,37 @@ def test_asset_renumbering_does_not_change_model_pixels(tmp_path):
     torch.testing.assert_close(original["targets"], renumbered["targets"], atol=0, rtol=0)
 
 
+def test_multidomain_control_format_preserves_dataset_pixels(tmp_path):
+    make_corpus(tmp_path)
+    original = GlyphSequenceDataset(tmp_path, "train", 1024)
+    before = original[0]
+    path = tmp_path / "glyph_inventory.json"
+    inventory = json.loads(path.read_text("utf-8"))
+    inventory["controls"] = {name: int(index) for index, name in inventory["controls"].items()}
+    path.write_text(json.dumps(inventory), encoding="utf-8")
+    restored = GlyphSequenceDataset(tmp_path, "train", 1024)
+    assert restored.control_ids == original.control_ids
+    assert restored.target_count == original.target_count
+    for key, value in before.items():
+        torch.testing.assert_close(value, restored[0][key], atol=0, rtol=0)
+
+
+@pytest.mark.parametrize(
+    "controls",
+    [
+        {"0": "PAD", "BOS": 1},
+        {"0": "PAD", "1": "PAD"},
+        {"PAD": 0, "BOS": 0},
+        {"PAD": False},
+    ],
+)
+def test_ambiguous_control_inventory_is_rejected(controls):
+    from hansgpt_research.glyph_lm import normalize_control_inventory
+
+    with pytest.raises(ValueError):
+        normalize_control_inventory(controls)
+
+
 def test_dataset_rejects_wrong_document_boundaries(tmp_path):
     make_corpus(tmp_path)
     tokens = np.fromfile(tmp_path / "train.uint16", dtype="<u2")

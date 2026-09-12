@@ -342,6 +342,25 @@ def collate_glyph_sequences(
     }
 
 
+def normalize_control_inventory(controls: dict) -> dict[str, int]:
+    """Read legacy index-to-name and multi-domain name-to-index control maps."""
+    if not isinstance(controls, dict) or not controls:
+        raise ValueError("Control inventory must be a nonempty mapping")
+    if all(isinstance(k, str) and k.isascii() and k.isdecimal() for k in controls) and all(
+        isinstance(v, str) for v in controls.values()
+    ):
+        normalized = {name: int(index) for index, name in controls.items()}
+    elif all(isinstance(k, str) and not k.isdecimal() for k in controls) and all(
+        type(v) is int for v in controls.values()
+    ):
+        normalized = dict(controls)
+    else:
+        raise ValueError("Mixed or malformed control inventory format")
+    if len(normalized) != len(controls) or len(set(normalized.values())) != len(controls):
+        raise ValueError("Control names and indices must be unique")
+    return normalized
+
+
 class GlyphSequenceDataset(Dataset[dict[str, Tensor]]):
     """Document-isolated fixed-length chunks of an on-disk glyph asset stream.
 
@@ -368,7 +387,7 @@ class GlyphSequenceDataset(Dataset[dict[str, Tensor]]):
             raise ValueError("glyph_bank must contain [assets, 1, 32, 32] binary tiles")
         self.glyph_bank = torch.from_numpy(np.array(bitmaps, dtype=np.uint8, copy=True))
         self.inventory = json.loads((self.data_dir / "glyph_inventory.json").read_text("utf-8"))
-        self.control_ids = {name: int(index) for index, name in self.inventory["controls"].items()}
+        self.control_ids = normalize_control_inventory(self.inventory["controls"])
         if any(name not in self.control_ids for name in ("PAD", "BOS", "EOS")):
             raise ValueError("Corpus must define PAD, BOS and EOS control tiles")
         controls = set(self.control_ids.values())

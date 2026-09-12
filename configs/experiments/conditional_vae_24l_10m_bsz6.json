@@ -1,0 +1,51 @@
+{
+  "experiment": "conditional_vae_24l_10m_ctx1024_bsz6_v1",
+  "gpu": 6,
+  "data": "data/processed/chinese_document_v3",
+  "data_requirements": {
+    "corpus_type": "chinese_document_packed_v3",
+    "manifest_sha256": "9962a55afc778caf74ef12a24fe017e594c2a683729738e68bce364ab11298a9"
+  },
+  "model": {
+    "hidden_size": 1024,
+    "num_hidden_layers": 24,
+    "num_attention_heads": 16,
+    "num_key_value_heads": 4,
+    "intermediate_size": 2816,
+    "max_position_embeddings": 2048
+  },
+  "encoder": {"width": 128, "layers": 2, "heads": 4},
+  "decoders": {
+    "width": 256,
+    "semantic_layers": 2,
+    "semantic_slots": 16,
+    "glyph_layers": 3,
+    "part_slots": 16,
+    "heads": 8,
+    "intermediate_size": 768
+  },
+  "vae": {"latent_dim": 64, "kl_warmup_han": 1000000, "beta_max": 1.0},
+  "training": {
+    "seed": 20260915,
+    "sequence_length": 1024,
+    "packing": "eos_causal",
+    "batch_size": 6,
+    "sampler_reference_batch_size": 8,
+    "gradient_accumulation_steps": 1,
+    "target_han": 10000000,
+    "learning_rate": 0.0003,
+    "minimum_learning_rate_ratio": 0.1,
+    "weight_decay": 0.1,
+    "warmup_tokens": 500000,
+    "target_tokens": 10000000,
+    "max_grad_norm": 1.0,
+    "precision": "fp16",
+    "num_workers": 2,
+    "head_chunk_size": 256,
+    "validation_samples": 256,
+    "validation_batch_size": 8,
+    "sortish_pool_batches": 64,
+    "validate_every_han": 1000000
+  }
+}
+

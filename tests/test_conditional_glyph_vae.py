@@ -2,10 +2,25 @@ import copy
 import runpy
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
 from hansgpt_research.conditional_glyph_vae import ConditionalGlyphVAE, gaussian_kl, sample_gaussian
+
+
+def test_bsz_control_retains_reference_order_and_consumed_cursor():
+    helper = runpy.run_path("scripts/train_conditional_vae.py")
+    lengths = np.random.default_rng(5).integers(900, 1025, size=1031)
+    baseline = dict(seed=20260915, batch_size=8, sortish_pool_batches=64)
+    control = dict(baseline, batch_size=6, sampler_reference_batch_size=8)
+    progress = dict(epoch=0, cursor=0)
+    order = list(helper["epoch_sampler"](lengths, baseline, progress))
+    assert order == list(helper["epoch_sampler"](lengths, control, progress))
+    assert len(set(order)) == len(lengths)
+    assert list(helper["epoch_sampler"](lengths, control, dict(epoch=0, cursor=18))) == order[18:]
+    unpinned = dict(baseline, batch_size=6)
+    assert order != list(helper["epoch_sampler"](lengths, unpinned, progress))
 
 
 def tiny_config():

@@ -51,6 +51,18 @@ def trim_han_budget(mask, is_han, remaining):
     return mask * (torch.arange(mask.numel(), device=mask.device).reshape_as(mask) <= last)
 
 
+def epoch_sampler(lengths, cfg, progress):
+    """Optionally retain a reference run's flat order while changing microbatch size."""
+    return SortishEpochSampler(
+        lengths,
+        cfg["seed"],
+        progress["epoch"],
+        cfg.get("sampler_reference_batch_size", cfg["batch_size"]),
+        progress["cursor"],
+        cfg.get("sortish_pool_batches", 64),
+    )
+
+
 @torch.inference_mode()
 def evaluate_elbo(model, subset, selection, cfg, device):
     model.eval()
@@ -423,9 +435,7 @@ def main():
     try:
         validate()
         while progress["han"] < cfg["target_han"]:
-            sampler = SortishEpochSampler(
-                lengths, cfg["seed"], progress["epoch"], cfg["batch_size"], progress["cursor"], 64
-            )
+            sampler = epoch_sampler(lengths, cfg, progress)
             loader = DataLoader(
                 dataset,
                 batch_size=cfg["batch_size"],

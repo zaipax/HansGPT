@@ -147,9 +147,9 @@ def install_xformers():
                 bias = torch.zeros_like(bias, dtype=q.dtype).masked_fill(~bias, float("-inf"))
             bias = bias.expand(q.shape[0], q.shape[1], q.shape[2], k.shape[2]).contiguous()
         out = xo.memory_efficient_attention(
-            q.transpose(1, 2),
-            k.transpose(1, 2),
-            v.transpose(1, 2),
+            q.transpose(1, 2).contiguous(),
+            k.transpose(1, 2).contiguous(),
+            v.transpose(1, 2).contiguous(),
             attn_bias=bias,
             p=0.0,
             scale=scale,

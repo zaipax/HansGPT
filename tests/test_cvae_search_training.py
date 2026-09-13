@@ -112,7 +112,7 @@ def test_xformers_float_padding_bias_broadcast():
     bias.masked_fill_(~torch.ones(16, 16, device="cuda", dtype=torch.bool).tril(), float("-inf"))
     bias[0, :, :, 12:] = float("-inf")
     original = f.scaled_dot_product_attention
-    a = original(q, k, v, attn_mask=bias)
+    a = original(q, k, v, attn_mask=bias.to(q.dtype))
     ga = torch.autograd.grad(a.float().square().sum(), (q, k, v))
     install_xformers()
     try:

@@ -82,6 +82,7 @@ def main():
     if rank == 0:
         meta = runtime_metadata(config, Path(config['data']), device)
         meta.update(world_size=world, physical_gpus=os.environ.get('CUDA_VISIBLE_DEVICES'),
+                    nccl_environment={k:v for k,v in os.environ.items() if k.startswith('NCCL_')},
                     global_batch=batch * world, benchmark_lr=3e-4, benchmark_beta=1,
                     scope='Fresh model; post-backward NCCL SUM; no checkpoints/evaluation')
         write_json(args.output / 'metadata.json', meta)
@@ -161,7 +162,7 @@ def main():
         for p in params:
             reference = p.detach().clone()
             dist.broadcast(reference, 0)
-            max_diff = torch.maximum(max_diff, (p - reference).abs().max())
+            max_diff = torch.maximum(max_diff, (p.detach() - reference).abs().max())
         dist.all_reduce(max_diff, op=dist.ReduceOp.MAX)
         if max_diff.item() != 0:
             raise AssertionError('Replicas diverged')

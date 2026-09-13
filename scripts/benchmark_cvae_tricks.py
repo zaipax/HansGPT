@@ -22,7 +22,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gpu", type=int, required=True)
     parser.add_argument(
-        "--variant", choices=["fixed", "xformers", "graph", "apex", "combined"], required=True
+        "--variant",
+        choices=["fixed", "xformers", "graph", "apex", "combined", "xformers_graph"],
+        required=True,
     )
     parser.add_argument("--steps", type=int, default=12)
     parser.add_argument("--output", type=Path, required=True)
@@ -40,7 +42,7 @@ def main():
     meta = runtime_metadata(cfg, Path(cfg["data"]), torch.device("cuda"))
     meta.update(variant=args.variant, physical_gpu=args.gpu, compile_head=not args.no_compile)
     write_json(args.output / "metadata.json", meta)
-    if args.variant in ["xformers", "combined"]:
+    if args.variant in ["xformers", "combined", "xformers_graph"]:
         install_xformers()
     report = dict(
         status="running",
@@ -100,7 +102,7 @@ def main():
         torch.cuda.synchronize()
         report["warmup_seconds"] = time.perf_counter() - warm
         graph = None
-        if args.variant in ["graph", "combined"]:
+        if args.variant in ["graph", "combined", "xformers_graph"]:
             optimizer.zero_grad(set_to_none=True)
             del sums
             gc.collect()

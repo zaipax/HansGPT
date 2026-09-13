@@ -27,14 +27,18 @@ def main():
         required=True,
     )
     parser.add_argument("--steps", type=int, default=12)
+    parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--no-compile", action="store_true")
     args = parser.parse_args()
+    if args.batch_size < 1 or args.steps < 3:
+        raise ValueError("Positive batch size and at least three measured steps required")
     if os.environ.get("CUDA_VISIBLE_DEVICES") != str(args.gpu):
         raise ValueError("Wrong physical GPU selection")
     args.output.mkdir(parents=True, exist_ok=False)
     cfg = json.loads(Path("configs/experiments/conditional_vae_24l_10m_optimized.json").read_text())
     tc = cfg["training"]
+    tc["batch_size"] = args.batch_size
     tc["apex_fused_adam"] = args.variant in ["apex", "combined"]
     torch.set_num_threads(4)
     torch.manual_seed(tc["seed"])
@@ -48,6 +52,9 @@ def main():
         status="running",
         variant=args.variant,
         gpu=args.gpu,
+        batch_size=args.batch_size,
+        context=1024,
+        head_chunk=256,
         steps=[],
         scope=(
             "Fixed CPU pixel dedup + shared differentiable encoder; full-model training. "
@@ -55,13 +62,14 @@ def main():
         ),
     )
     try:
+        report["phase"] = "prepare"
         ds = PackedGlyphSequenceDataset(cfg["data"], "train", 1024)
         prepared = []
         cpu_times = []
         for i in range(args.steps + 3):
             tick = time.perf_counter()
-            start = (i * 104729) % (len(ds) - 8)
-            batch = collate_glyph_sequences([ds[start + j] for j in range(8)])
+            start = (i * 104729) % (len(ds) - args.batch_size)
+            batch = collate_glyph_sequences([ds[start + j] for j in range(args.batch_size)])
             prepared.append(prepare_pixels(batch))
             cpu_times.append(time.perf_counter() - tick)
         bucket = ((max(p["unique"] for p in prepared) + 127) // 128) * 128
@@ -74,11 +82,11 @@ def main():
         optimizer = optimizer_for(model, tc)
         scaler = torch.amp.GradScaler("cuda")
         scaler.scale(torch.ones((), device="cuda"))
-        step = FixedBackward(model, 8, 1024, 256, compiled=not args.no_compile)
+        step = FixedBackward(model, args.batch_size, 1024, 256, compiled=not args.no_compile)
         static = {
             k: prepared[0][k].cuda() for k in ["tiles", "x_index", "y_index", "targets", "mask"]
         }
-        noise = torch.randn(8192, 64, device="cuda")
+        noise = torch.randn(args.batch_size * 1024, cfg["vae"]["latent_dim"], device="cuda")
         scale = torch.ones((), device="cuda") * 65536
         beta = torch.ones((), device="cuda")
 
@@ -92,6 +100,7 @@ def main():
             scale.copy_(scaler._get_scale_async())
 
         warm = time.perf_counter()
+        report["phase"] = "warmup"
         for _ in range(2):
             optimizer.zero_grad(set_to_none=True)
             sums = backward()
@@ -103,6 +112,7 @@ def main():
         report["warmup_seconds"] = time.perf_counter() - warm
         graph = None
         if args.variant in ["graph", "combined", "xformers_graph"]:
+            report["phase"] = "capture"
             optimizer.zero_grad(set_to_none=True)
             del sums
             gc.collect()
@@ -120,6 +130,7 @@ def main():
         free, total_memory = torch.cuda.mem_get_info()
         peak_device_used = (total_memory - free) / 2**30
         torch.cuda.reset_peak_memory_stats()
+        report["phase"] = "measure"
         for i, p in enumerate(prepared[2 : 2 + args.steps]):
             torch.cuda.synchronize()
             tick = time.perf_counter()
@@ -143,6 +154,7 @@ def main():
                 seconds=seconds,
                 targets=targets,
                 targets_per_second=targets / seconds,
+                cpu_preparation_seconds=cpu_times[i + 2],
                 bce=metrics[0] / (targets * 1024),
                 kl=metrics[1] / targets,
                 optimizer=update,
@@ -159,7 +171,17 @@ def main():
             peak_device_used_gib=peak_device_used,
             targets_per_second=sum(r["targets"] for r in report["steps"])
             / sum(r["seconds"] for r in report["steps"]),
+            serial_preparation_plus_step_targets_s=sum(r["targets"] for r in report["steps"])
+            / sum(r["seconds"] + r["cpu_preparation_seconds"] for r in report["steps"]),
         )
+    except torch.cuda.OutOfMemoryError as exc:
+        report.update(
+            status="out_of_memory",
+            error=str(exc),
+            peak_allocated_gib=torch.cuda.max_memory_allocated() / 2**30,
+            peak_reserved_gib=torch.cuda.max_memory_reserved() / 2**30,
+        )
+        raise
     except Exception as exc:
         report.update(status="failed", error=f"{type(exc).__name__}: {exc}")
         raise

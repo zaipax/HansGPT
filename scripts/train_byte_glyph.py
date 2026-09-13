@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from hansgpt_research.byte_training import DEFAULT_ACCELERATION, ByteBackward, ByteCollator
+from hansgpt_research.position_schedule import position_learning_rate
 from hansgpt_research.cvae_fixed_step import install_xformers
 from hansgpt_research.packed_glyph_data import PackedGlyphSequenceDataset
 from hansgpt_research.train_attention_glyph_lm import model_from_config
@@ -26,6 +27,7 @@ def main():
     args=parser.parse_args()
     config=json.loads(args.config.read_text())
     cfg=config['training']
+    position_learning_rate(1,cfg)
     for key,value in DEFAULT_ACCELERATION.items(): cfg.setdefault(key,value)
     if any(cfg[k]!=v for k,v in DEFAULT_ACCELERATION.items()):
         raise ValueError('This runner requires the default accelerated stack')
@@ -61,6 +63,8 @@ def main():
             timing_scope='data prefetch/transfers/backward/optimizer; first 10 updates excluded; no checkpoint IO')
         write_json(output/'metadata.json',metadata)
         ds=PackedGlyphSequenceDataset(config['data'],'train',cfg['sequence_length'])
+        if cfg.get('lr_schedule')=='global_cosine' and cfg['schedule_total_positions']!=ds.target_count:
+            raise ValueError('Global schedule horizon must match the full training dataset')
         lengths=sequence_lengths(ds)
         han_lookup=torch.zeros(len(ds.glyph_bank),dtype=torch.bool)
         for char,index in ds.inventory['characters'].items():
@@ -79,10 +83,13 @@ def main():
             for _ in range(len(loader)):
                 if progress['steps']==warmup_steps and measured_start is None:
                     torch.cuda.synchronize(); measured_start=time.monotonic()
+                    torch.cuda.reset_peak_memory_stats()
                 tick=time.monotonic()
                 cpu=next(iterator)
                 targets=int(cpu['mask'].sum())
                 if not targets: continue
+                for group in optimizer.param_groups:
+                    group['lr']=position_learning_rate(progress['all_targets']+targets,cfg)
                 data={k:cpu[k].to(device,non_blocking=True) for k in ['tiles','indices','byte_targets','mask']}
                 for retry in range(20):
                     optimizer.zero_grad(set_to_none=True)
@@ -98,7 +105,11 @@ def main():
                 progress['han']+=int(han_lookup[cpu['target_ids']][cpu['mask'].bool()].sum())
                 progress['cursor']+=cfg['batch_size']
                 row=dict(step=progress['steps'],seconds=seconds,targets=targets,
-                         nll_per_pixel=float(loss)/(targets*1024),grad_norm=update['grad_norm'])
+                         nll_per_pixel=float(loss)/(targets*1024),grad_norm=update['grad_norm'],
+                         learning_rate=optimizer.param_groups[0]['lr'],
+                         allocated_gib=torch.cuda.memory_allocated()/2**30,
+                         reserved_gib=torch.cuda.memory_reserved()/2**30,
+                         device_used_gib=(torch.cuda.get_device_properties(device).total_memory-torch.cuda.mem_get_info(device)[0])/2**30)
                 if progress['steps']>warmup_steps: rows.append(row)
                 if progress['steps']%10==0 or progress['steps']==steps:
                     with (logs/'training.jsonl').open('a') as f: f.write(json.dumps(row)+'\n')

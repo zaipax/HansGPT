@@ -62,3 +62,27 @@ Artifacts use `hansgpt_byte_c_ctx1024_bsz8_no_gc_v1_full`. Final weights are
 retained. The original batch32 1000-update run had not started when the user
 requested this smaller-batch probe. Its smoke-only throughput is not a matched
 long-run baseline for claiming a precise speedup.
+
+## Batch 10, head chunk 2048, without recomputation
+
+GPU7 configuration `hansgpt_attention_c_ctx1024_bsz10_h2048.json` keeps
+context1024 and the same acceleration stack, with batch10 and chunk2048.
+Both the three-update smoke and 70-update measurement passed with zero AMP
+overflow. Training implementation/config commit: `14cba37`.
+
+| Metric | Batch8 / chunk256 | Batch10 / chunk2048 |
+| --- | ---: | ---: |
+| Measured updates after ten warmups | 60 | 60 |
+| Measured seconds | 70.177 | 81.576 |
+| Effective prediction positions/s | 6,954.72 | 7,479.61 |
+| Mean update seconds | 1.170 | 1.360 |
+| Peak allocated GiB | 17.055 | 28.926 |
+| Peak reserved GiB | 17.869 | 30.439 |
+
+The combined batch/chunk change improves measured throughput by 7.55%, at
+substantially higher memory usage. It is not an isolated chunk-size ablation.
+GPU7 device memory sampled during the run was 31,564 MiB with 100% utilization.
+The short run does not establish worst-case memory safety across the full corpus.
+All 70 updates consumed 711,629 valid positions including 636,807 Han.
+Artifacts and final checkpoint use experiment name
+`hansgpt_byte_c_ctx1024_bsz10_h2048_no_gc_v1_full`.

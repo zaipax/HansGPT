@@ -94,6 +94,19 @@ def install_xformers():
 
     original = F.scaled_dot_product_attention
 
+    def backward_operator(*args, **kwargs):
+        # xFormers 0.0.32 supplies empty CPU RNG placeholders when dropout is
+        # disabled. Torch 2.8 AOTAutograd cannot infer a common device from those
+        # and CUDA Q/K/V. These arguments are unused at p=0; keep them on CUDA.
+        if kwargs.get("dropout_p", 0.0) == 0.0:
+            placeholder = args[1].new_empty((0,), dtype=torch.int64)
+            kwargs["philox_seed"] = placeholder
+            kwargs["philox_offset"] = placeholder
+        return cutlass.BwOp.OPERATOR(*args, **kwargs)
+
+    class CompileCompatibleBackward(cutlass.BwOp):
+        OPERATOR = staticmethod(backward_operator)
+
     def attention(
         q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, *, scale=None, enable_gqa=False
     ):
@@ -121,7 +134,7 @@ def install_xformers():
             attn_bias=bias,
             p=0.0,
             scale=scale,
-            op=(cutlass.FwOp, cutlass.BwOp),
+            op=(cutlass.FwOp, CompileCompatibleBackward),
         )
         return out.transpose(1, 2)
 

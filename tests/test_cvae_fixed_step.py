@@ -67,6 +67,34 @@ def test_xformers_sdpa_outputs_and_gradients(grouped):
             torch.testing.assert_close(x, y, rtol=0.03, atol=0.02)
 
 
+@pytest.mark.skipif(
+    os.environ.get("HANSGPT_TEST_XFORMERS") != "1", reason="Optional CUDA extension test"
+)
+def test_compiled_xformers_backward_has_cuda_rng_placeholders():
+    import torch.nn.functional as f
+
+    q = torch.randn(2, 4, 16, 32, device="cuda", dtype=torch.float16, requires_grad=True)
+    k = torch.randn_like(q, requires_grad=True)
+    v = torch.randn_like(q, requires_grad=True)
+    original = f.scaled_dot_product_attention
+    expected = original(q, k, v).float().square().sum()
+    grads = torch.autograd.grad(expected, (q, k, v))
+    install_xformers()
+    try:
+
+        def loss(a, b, c):
+            return f.scaled_dot_product_attention(a, b, c).float().square().sum()
+
+        compiled = torch.compile(loss, fullgraph=True, options={"triton.cudagraphs": False})
+        actual = compiled(q, k, v)
+        actual_grads = torch.autograd.grad(actual, (q, k, v))
+    finally:
+        f.scaled_dot_product_attention = original
+    torch.testing.assert_close(actual, expected, rtol=0.003, atol=0.01)
+    for a, b in zip(actual_grads, grads, strict=True):
+        torch.testing.assert_close(a, b, rtol=0.03, atol=0.02)
+
+
 @pytest.mark.skipif(os.environ.get("HANSGPT_TEST_GRAPH") != "1", reason="Explicit GPU graph test")
 def test_graph_replay_overwrites_gradients_and_accepts_new_noise():
     cfg = runpy.run_path("tests/test_conditional_glyph_vae.py")["tiny_config"]()

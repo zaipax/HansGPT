@@ -39,9 +39,6 @@
     "learning_rate": 0.0003,
     "minimum_learning_rate_ratio": 0.1,
     "weight_decay": 0.1,
-    "warmup_tokens": 1000000,
-    "target_tokens": 100000000,
-    "max_epochs": 1000,
     "max_grad_norm": 1.0,
     "precision": "fp16",
     "gradient_checkpointing": true,
@@ -49,8 +46,6 @@
     "sampler": "sortish",
     "sortish_pool_batches": 64,
     "log_every_steps": 10,
-    "validate_every_tokens": 5000000,
-    "checkpoint_every_steps": 1000,
     "max_consecutive_overflows": 20,
     "head_chunk_size": 256,
     "freeze_backbone": false,
@@ -60,7 +55,8 @@
     "max_steps": 1000,
     "attention_backend": "xformers",
     "compile_head": true,
-    "fused_adamw": true
+    "fused_adamw": true,
+    "lr_schedule": "constant"
   },
   "data": "data/processed/chinese_document_v3"
 }

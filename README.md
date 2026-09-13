@@ -1,5 +1,17 @@
 # 汉字点阵排字板
 
+## 当前字形预训练入口
+
+当前主线为纯 Transformer C 版：patch 字形编码器、24 层 GPT 主干和
+128 步自回归字节解码器。使用 `uv run python scripts/train_byte_glyph.py`，
+默认配置为 `configs/experiments/hansgpt_attention_c_ctx1024.json`。
+**默认加速方案固定为 xFormers＋torch.compile＋PyTorch fused AdamW**；
+新入口缺少任一组件会报错，不会自动降级。compile 覆盖完整字节头损失，
+主干保持 eager 并启用梯度检查点；既有实验配置保留其历史含义。
+本次 GPU7 测试使用 ctx=1024、bsz=32、head chunk=256，固定学习率 3e-4，
+从零训练 1000 次成功更新；吞吐排除前 10 次更新的初始化/编译预热。
+详细协议见 [BYTE_C_CTX1024.md](BYTE_C_CTX1024.md)。
+
 一个零依赖的实时汉字点阵前端项目。左侧输入文字，右侧立即转换成 32×32 点阵字形。
 
 仓库同时包含冻结语言模型隐藏状态到 32×32 汉字点阵的研究代码。完整方案见

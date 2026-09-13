@@ -99,6 +99,8 @@ def install_xformers():
     from xformers.ops.fmha import cutlass
 
     original = F.scaled_dot_product_attention
+    # Construct the non-Tensor bias outside Dynamo's full-graph region.
+    causal_bias = xo.LowerTriangularMask()
 
     def backward_operator(*args, **kwargs):
         # xFormers 0.0.32 supplies empty CPU RNG placeholders when dropout is
@@ -146,7 +148,7 @@ def install_xformers():
         if is_causal:
             if attn_mask is not None:
                 raise ValueError("Do not combine causal and explicit masks")
-            bias = xo.LowerTriangularMask()
+            bias = causal_bias
         elif attn_mask is not None:
             bias = attn_mask
             if bias.dtype == torch.bool:

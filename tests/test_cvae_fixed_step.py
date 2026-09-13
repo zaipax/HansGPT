@@ -43,19 +43,22 @@ def test_shared_encoder_loss_mask_and_gradients():
 @pytest.mark.skipif(
     os.environ.get("HANSGPT_TEST_XFORMERS") != "1", reason="Optional CUDA extension test"
 )
-def test_xformers_sdpa_outputs_and_gradients():
+@pytest.mark.parametrize("grouped", [False, True])
+def test_xformers_sdpa_outputs_and_gradients(grouped):
     import torch.nn.functional as f
 
     q = torch.randn(2, 4, 16, 32, device="cuda", dtype=torch.float16, requires_grad=True)
-    k = torch.randn_like(q, requires_grad=True)
-    v = torch.randn_like(q, requires_grad=True)
+    k = torch.randn(
+        2, 2 if grouped else 4, 16, 32, device="cuda", dtype=torch.float16, requires_grad=True
+    )
+    v = torch.randn_like(k, requires_grad=True)
     original = f.scaled_dot_product_attention
     for causal in [False, True]:
-        a = original(q, k, v, is_causal=causal)
+        a = original(q, k, v, is_causal=causal, enable_gqa=grouped)
         ga = torch.autograd.grad(a.float().square().sum(), (q, k, v))
         install_xformers()
         try:
-            b = f.scaled_dot_product_attention(q, k, v, is_causal=causal)
+            b = f.scaled_dot_product_attention(q, k, v, is_causal=causal, enable_gqa=grouped)
             gb = torch.autograd.grad(b.float().square().sum(), (q, k, v))
         finally:
             f.scaled_dot_product_attention = original

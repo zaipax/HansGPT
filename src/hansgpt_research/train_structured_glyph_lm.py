@@ -484,7 +484,12 @@ def optimizer_for(model, cfg):
             from apex.optimizers import FusedAdam
         except Exception as exc:
             raise RuntimeError("apex_fused_adam requested but NVIDIA Apex is unavailable") from exc
-        return FusedAdam(
+
+        class CompatibleFusedAdam(FusedAdam):
+            def zero_grad(self, set_to_none=True):
+                return torch.optim.Optimizer.zero_grad(self, set_to_none=set_to_none)
+
+        return CompatibleFusedAdam(
             groups,
             lr=cfg["learning_rate"],
             betas=(0.9, 0.95),

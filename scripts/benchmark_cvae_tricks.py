@@ -113,6 +113,10 @@ def main():
                     sums = backward()
             torch.cuda.current_stream().wait_stream(stream)
             torch.cuda.synchronize()
+        report["setup_peak_allocated_gib"] = torch.cuda.max_memory_allocated() / 2**30
+        report["setup_peak_reserved_gib"] = torch.cuda.max_memory_reserved() / 2**30
+        free, total_memory = torch.cuda.mem_get_info()
+        peak_device_used = (total_memory - free) / 2**30
         torch.cuda.reset_peak_memory_stats()
         for i, p in enumerate(prepared[2 : 2 + args.steps]):
             torch.cuda.synchronize()
@@ -129,6 +133,8 @@ def main():
             update = complete_optimizer_step(optimizer, scaler, model.parameters(), 1.0)
             torch.cuda.synchronize()
             seconds = time.perf_counter() - tick
+            free, total_memory = torch.cuda.mem_get_info()
+            peak_device_used = max(peak_device_used, (total_memory - free) / 2**30)
             targets = int(p["mask"].sum())
             row = dict(
                 step=i,
@@ -148,6 +154,7 @@ def main():
             parameters=sum(p.numel() for p in model.parameters()),
             peak_allocated_gib=torch.cuda.max_memory_allocated() / 2**30,
             peak_reserved_gib=torch.cuda.max_memory_reserved() / 2**30,
+            peak_device_used_gib=peak_device_used,
             targets_per_second=sum(r["targets"] for r in report["steps"])
             / sum(r["seconds"] for r in report["steps"]),
         )

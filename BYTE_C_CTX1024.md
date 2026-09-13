@@ -44,3 +44,21 @@ The report is `result.json`; current progress is `status.json`; final weights
 are `final.pt`. A separate `_smoke` name prevents mixing smoke and formal weights.
 Run under tmux with `CUDA_DEVICE_ORDER=PCI_BUS_ID`, `CUDA_VISIBLE_DEVICES=7`,
 the existing optional xFormers PYTHONPATH, and the project uv environment.
+
+## Batch 8 without recomputation
+
+At the user's request, a separate GPU7 configuration
+`hansgpt_attention_c_ctx1024_bsz8.json` disables backbone checkpointing and
+uses batch8 with the same context1024, chunk256 and acceleration defaults.
+The three-update smoke passed. The subsequent 70-update run (first ten
+excluded from timing) completed with zero AMP overflow:
+
+- 60 measured updates in 70.177 seconds, **6,954.72 effective positions/s**.
+- Mean timed update including logging/prefetch overhead: **1.170 seconds**.
+- Peak allocated/reserved GPU memory: **17.055 / 17.869 GiB**.
+- All 70 updates consumed 569,450 valid positions, including 509,559 Han.
+
+Artifacts use `hansgpt_byte_c_ctx1024_bsz8_no_gc_v1_full`. Final weights are
+retained. The original batch32 1000-update run had not started when the user
+requested this smaller-batch probe. Its smoke-only throughput is not a matched
+long-run baseline for claiming a precise speedup.

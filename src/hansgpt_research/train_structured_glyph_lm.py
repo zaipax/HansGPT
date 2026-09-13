@@ -475,11 +475,23 @@ def validate(model, subset, selection, cfg, device) -> dict:
 def optimizer_for(model, cfg):
     # Frozen parameters remain registered so a scheduled unfreeze preserves optimizer identity.
     parameters = list(model.parameters())
+    groups = [
+        {"params": [p for p in parameters if p.ndim >= 2], "weight_decay": cfg["weight_decay"]},
+        {"params": [p for p in parameters if p.ndim < 2], "weight_decay": 0.0},
+    ]
+    if cfg.get("apex_fused_adam", False):
+        try:
+            from apex.optimizers import FusedAdam
+        except Exception as exc:
+            raise RuntimeError("apex_fused_adam requested but NVIDIA Apex is unavailable") from exc
+        return FusedAdam(
+            groups,
+            lr=cfg["learning_rate"],
+            betas=(0.9, 0.95),
+            adam_w_mode=True,
+        )
     return torch.optim.AdamW(
-        [
-            {"params": [p for p in parameters if p.ndim >= 2], "weight_decay": cfg["weight_decay"]},
-            {"params": [p for p in parameters if p.ndim < 2], "weight_decay": 0.0},
-        ],
+        groups,
         lr=cfg["learning_rate"],
         betas=(0.9, 0.95),
         fused=cfg.get("fused_adamw", False),

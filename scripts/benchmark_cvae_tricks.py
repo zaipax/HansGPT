@@ -28,17 +28,21 @@ def main():
     )
     parser.add_argument("--steps", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--head-chunk-size", type=int, default=256)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--no-compile", action="store_true")
     args = parser.parse_args()
     if args.batch_size < 1 or args.steps < 3:
         raise ValueError("Positive batch size and at least three measured steps required")
+    if args.head_chunk_size < 1 or args.batch_size * 1024 % args.head_chunk_size:
+        raise ValueError("Head chunk must be positive and divide the fixed positional batch")
     if os.environ.get("CUDA_VISIBLE_DEVICES") != str(args.gpu):
         raise ValueError("Wrong physical GPU selection")
     args.output.mkdir(parents=True, exist_ok=False)
     cfg = json.loads(Path("configs/experiments/conditional_vae_24l_10m_optimized.json").read_text())
     tc = cfg["training"]
     tc["batch_size"] = args.batch_size
+    tc["head_chunk_size"] = args.head_chunk_size
     tc["apex_fused_adam"] = args.variant in ["apex", "combined"]
     torch.set_num_threads(4)
     torch.manual_seed(tc["seed"])
@@ -54,7 +58,7 @@ def main():
         gpu=args.gpu,
         batch_size=args.batch_size,
         context=1024,
-        head_chunk=256,
+        head_chunk=args.head_chunk_size,
         steps=[],
         scope=(
             "Fixed CPU pixel dedup + shared differentiable encoder; full-model training. "
@@ -82,7 +86,9 @@ def main():
         optimizer = optimizer_for(model, tc)
         scaler = torch.amp.GradScaler("cuda")
         scaler.scale(torch.ones((), device="cuda"))
-        step = FixedBackward(model, args.batch_size, 1024, 256, compiled=not args.no_compile)
+        step = FixedBackward(
+            model, args.batch_size, 1024, args.head_chunk_size, compiled=not args.no_compile
+        )
         static = {
             k: prepared[0][k].cuda() for k in ["tiles", "x_index", "y_index", "targets", "mask"]
         }

@@ -102,7 +102,26 @@ def install_xformers():
             placeholder = args[1].new_empty((0,), dtype=torch.int64)
             kwargs["philox_seed"] = placeholder
             kwargs["philox_offset"] = placeholder
-        return cutlass.BwOp.OPERATOR(*args, **kwargs)
+        # ``out`` is an input here, not an out= destination. Pass it positionally
+        # so Dynamo does not misinterpret a multi-output operator's keyword.
+        return torch.ops.aten._efficient_attention_backward.default(
+            *args,
+            kwargs["bias"],
+            kwargs["out"],
+            kwargs["cu_seqlens_q"],
+            kwargs["cu_seqlens_k"],
+            kwargs["max_seqlen_q"],
+            kwargs["max_seqlen_k"],
+            kwargs["logsumexp"],
+            kwargs["dropout_p"],
+            kwargs["philox_seed"],
+            kwargs["philox_offset"],
+            kwargs["custom_mask_type"],
+            kwargs["bias_requires_grad"],
+            scale=kwargs.get("scale"),
+            num_splits_key=kwargs.get("num_splits_key"),
+            window_size=kwargs.get("window_size"),
+        )
 
     class CompileCompatibleBackward(cutlass.BwOp):
         OPERATOR = staticmethod(backward_operator)

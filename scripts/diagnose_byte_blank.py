@@ -91,8 +91,8 @@ def main():
                 norm_b+=float(b.double().square().sum());diff+=float((a-b).double().square().sum())
             statistics[prefix]=dict(relative_l2=(diff/max(norm_a,1e-30))**.5,
                                     cosine=dot/max((norm_a*norm_b)**.5,1e-30))
-        report['training_differential']=dict(original_nll=float(reference),compiled_nll=float(actual),gradients=statistics)
-        assert abs(float(reference)-float(actual))<1e-3
+        report['training_differential']=dict(original_nll=float(reference.detach()),compiled_nll=float(actual),gradients=statistics)
+        assert abs(float(reference.detach())-float(actual))<1e-3
         assert all(s['cosine']>0.999 and s['relative_l2']<0.03 for s in statistics.values())
         print(json.dumps({'training_differential':report['training_differential']}),flush=True)
         del gradients,runner,data,batch

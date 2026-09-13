@@ -59,3 +59,23 @@ Reports, logs and checkpoints use the experiment name
 The checkpoint is `positions_010000000.pt`; final metrics are `complete.json`.
 The separate smoke run checks exact milestones and generation, including
 unaligned short byte-cache masks required by xFormers CUTLASS.
+
+## 100M-position follow-up
+
+`configs/experiments/hansgpt_byte_c_four_gpu_100m.json` changes only the
+experiment name and target budget from the completed 10M run. It starts from
+the same random seed on GPUs 4–7, with batch8 per rank, context1024, chunk2048,
+no backbone recomputation and constant LR 0.0003. It does not resume the
+10M checkpoint. The already-completed 10M run validates this unchanged code
+and numerical configuration before the longer run.
+
+Retain checkpoints at exactly 10M, 20M, ..., 100M positions, requiring about
+31 GiB in total. Validate at each milestone; final generation remains the
+single fixed-prompt diagnostic. The run should perform approximately 3,080
+successful updates, versus 308 in the 10M probe. Actual counts are recorded.
+
+Artifacts use `hansgpt_byte_c_four_gpu_b8_h2048_100m_v1_full` under the standard
+logs/reports/checkpoints directories. The server tmux session is `byte-four-100m`
+on socket `hansgpt-lr-v1`. The current timing field excludes startup/first ten
+updates and final saving/evaluation, but includes intermediate milestone I/O
+and validation; interpret it accordingly for this multi-checkpoint run.

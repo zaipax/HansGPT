@@ -55,3 +55,28 @@ Source commit: `5ca5374`. Successful server/local results:
 `artifacts/reports/xformers_head_sweep_v2/summary.json`, with per-case metadata and
 results on the server. Initial compile failures remain separately in
 `xformers_head_sweep_v1`. GPUs were released after the tests.
+
+## Larger-chunk follow-up: 4096 and 8192
+
+GPU 6 tested 4096 and GPU 7 tested 8192. Both first ran a same-card 2048 control,
+with unchanged model, batch 8, context 1024, source data and optimization flags.
+Each passing run completed 24 measured updates after warmup.
+
+| GPU | Head chunk | Targets/s | Device GiB | Result |
+| ---: | ---: | ---: | ---: | --- |
+| 6 | 2048 | 8397 | 23.34 | passed |
+| 6 | 4096 | 8343 | 30.66 | passed |
+| 7 | 2048 | 8462 | 23.34 | passed |
+| 7 | 8192 | — | OOM | failed during warmup |
+
+4096 changed throughput by -0.64%, effectively flat at this measurement precision,
+while increasing observed device memory by 7.32 GiB. It does not offer a measured
+speed benefit. 8192 could not allocate a further 960 MiB with only about 534 MiB
+free; this was actual CUDA OOM, not a compiler failure. All 72 measured updates
+in the passing runs succeeded, with matching per-step target counts in the GPU 6
+comparison. No long-run quality conclusion follows from these probes.
+
+Recommendation remains **head chunk 2048**. Throughput excludes CPU preparation.
+Results: `artifacts/reports/xformers_head_large_v1/summary.json` and per-case
+metadata/results on the server. Implementation is unchanged from the previous
+sweep; source revision for this follow-up is `2fed9e6`. GPUs were released.

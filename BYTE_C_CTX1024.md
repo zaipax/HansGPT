@@ -29,6 +29,15 @@ checkpoint I/O, and includes prefetch waits, transfers, backward and optimizer
 steps. The final checkpoint, metadata, per-step NLL and throughput are retained.
 This is a throughput run, not a completed language-quality evaluation.
 
+The checkpointed three-update smoke passed without AMP overflow, with a final
+step time of 4.824 seconds for 32,736 valid targets (about 6,786 targets/s).
+Peak allocated/reserved memory was approximately 9.31/10.88 GiB. Its aggregate
+smoke rate includes compilation and must not be used as the steady-state rate.
+Disabling backbone checkpointing exhausted the 31.74 GiB device before the first
+update, so the formal run keeps checkpointing enabled. Eager accelerated byte
+loss and gradients match the original teacher-forced joint byte likelihood in
+unit tests; the full model smoke exercised the compiled xFormers path.
+
 Server paths use experiment name `hansgpt_byte_c_ctx1024_bsz32_v1_full` under
 `artifacts/logs/`, `artifacts/reports/`, and `artifacts/checkpoints/`.
 The report is `result.json`; current progress is `status.json`; final weights

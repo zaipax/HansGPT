@@ -41,7 +41,7 @@
     "weight_decay": 0.1,
     "max_grad_norm": 1.0,
     "precision": "fp16",
-    "gradient_checkpointing": false,
+    "gradient_checkpointing": true,
     "num_workers": 2,
     "sampler": "sortish",
     "sortish_pool_batches": 64,

@@ -1,4 +1,4 @@
-"""Four-rank pure-Transformer byte training with an exact valid-position budget."""
+"""Synchronous byte training with separate global LR horizon and stopping budget."""
 
 import argparse
 import json
@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 from benchmark_cvae_multigpu import sync_gradients
 from hansgpt_research.train_attention_glyph_lm import model_from_config, validate_nll, generation_diagnostic
 from hansgpt_research.byte_training import ByteBackward, ByteCollator, DEFAULT_ACCELERATION
+from hansgpt_research.position_schedule import position_learning_rate
 from hansgpt_research.cvae_distributed_data import PaddedDataset, RankBatches, select_global_positions
 from hansgpt_research.cvae_fixed_step import install_xformers
 from hansgpt_research.glyph_lm import GlyphSequenceDataset
@@ -42,8 +43,9 @@ def main():
     if any(cfg[k] != v for k,v in DEFAULT_ACCELERATION.items()) or config['variant'] != 'C':
         raise ValueError('Requires pure C architecture and default acceleration')
     rank, local, world = [int(os.environ[k]) for k in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE']]
-    if world != 4 or cfg['gradient_accumulation_steps'] != 1:
-        raise ValueError('This protocol requires four ranks and accumulation one')
+    if world != cfg.get('world_size',4) or cfg['gradient_accumulation_steps'] != 1:
+        raise ValueError('World size must match the declared configuration; accumulation must be one')
+    position_learning_rate(1,cfg)
     if args.smoke:
         cfg.update(target_tokens=65536, checkpoint_every_positions=32768, validation_samples=8)
     name = config['experiment'] + ('_smoke' if args.smoke else '_full')
@@ -102,6 +104,8 @@ def main():
                 nccl_environment={k:v for k,v in os.environ.items() if k.startswith('NCCL_')})
             write_json(output / 'metadata.json', metadata)
         ds = PackedGlyphSequenceDataset(config['data'], 'train', cfg['sequence_length'])
+        if cfg.get('lr_schedule') == 'global_cosine' and cfg['schedule_total_positions'] != ds.target_count:
+            raise ValueError('Full-data LR horizon must equal the verified training target count')
         lengths = sequence_lengths(ds)
         han_lookup = torch.zeros(len(ds.glyph_bank), dtype=torch.bool)
         for char, index in ds.inventory['characters'].items():
@@ -189,7 +193,7 @@ def main():
                     han = torch.tensor(int(han_lookup[cpu['target_ids']][mask].sum()), device=device)
                     dist.all_reduce(han)
                     positions = progress['all_targets'] + take
-                    lr = cfg['learning_rate']
+                    lr = position_learning_rate(positions,cfg)
                     for group in optimizer.param_groups:
                         group['lr'] = lr
                     data = {k: cpu[k].to(device, non_blocking=True)

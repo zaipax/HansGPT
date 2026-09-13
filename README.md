@@ -3,14 +3,15 @@
 ## 当前字形预训练入口
 
 当前主线为纯 Transformer C 版：patch 字形编码器、24 层 GPT 主干和
-128 步自回归字节解码器。使用 `uv run python scripts/train_byte_glyph.py`，
-默认配置为 `configs/experiments/hansgpt_attention_c_ctx1024.json`。
+128 步自回归字节解码器。正式预训练使用 `scripts/train_byte_multigpu.py`；
+当前八卡配置为 `configs/experiments/hansgpt_byte_c_eight_gpu_global_lr_100m.json`。
+**学习率按完整训练集的全局有效位置数调度，试跑停止预算不改变调度周期**。
+当前运行完整一遍训练数据前 1 亿位置，见 [全局调度协议](BYTE_C_EIGHT_GPU_GLOBAL_LR.md)。
 **默认加速方案固定为 xFormers＋torch.compile＋PyTorch fused AdamW**；
 新入口缺少任一组件会报错，不会自动降级。compile 覆盖完整字节头损失，
-主干保持 eager 并启用梯度检查点；既有实验配置保留其历史含义。
-本次 GPU7 测试使用 ctx=1024、bsz=32、head chunk=256，固定学习率 3e-4，
-从零训练 1000 次成功更新；吞吐排除前 10 次更新的初始化/编译预热。
-详细协议见 [BYTE_C_CTX1024.md](BYTE_C_CTX1024.md)。
+主干保持 eager；当前每卡 bsz=8、ctx=1024、head chunk=2048，不启用重计算。
+`scripts/train_byte_glyph.py` 及旧恒定学习率配置仅用于历史吞吐对照，
+不代表正式预训练调度。单卡测试记录见 [BYTE_C_CTX1024.md](BYTE_C_CTX1024.md)。
 
 一个零依赖的实时汉字点阵前端项目。左侧输入文字，右侧立即转换成 32×32 点阵字形。
 

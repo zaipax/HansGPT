@@ -153,7 +153,13 @@ def install_xformers():
             bias = attn_mask
             if bias.dtype == torch.bool:
                 bias = torch.zeros_like(bias, dtype=q.dtype).masked_fill(~bias, float("-inf"))
-            bias = bias.to(dtype=q.dtype).expand(q.shape[0], q.shape[1], q.shape[2], k.shape[2])
+            bias = bias.to(dtype=q.dtype)
+            # CUTLASS requires an eight-element-aligned row stride, including
+            # short cached byte prefixes. Keep padded storage, slice logical keys.
+            if bias.stride(-2) % 8:
+                key_length = bias.shape[-1]
+                bias = F.pad(bias, (0, (-key_length) % 8))[..., :key_length]
+            bias = bias.expand(q.shape[0], q.shape[1], q.shape[2], k.shape[2])
         out = xo.memory_efficient_attention(
             q.transpose(1, 2).contiguous(),
             k.transpose(1, 2).contiguous(),

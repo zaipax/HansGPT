@@ -100,6 +100,7 @@ def main():
             han_lookup[int(index)] = True
     loader = DataLoader(ds, batch_size=batch, sampler=local_order, num_workers=2,
                         pin_memory=True, collate_fn=SharedGlyphCollator(batch, ctx),
+                        multiprocessing_context='spawn',
                         generator=torch.Generator().manual_seed(cfg['seed']))
     iterator = iter(loader)
     optimizer = optimizer_for(model, cfg)

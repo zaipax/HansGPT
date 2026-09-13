@@ -7,13 +7,19 @@ import torch.nn.functional as F
 from hansgpt_research.cvae_training_optimization import make_head_kernel
 
 
-def prepare_pixels(batch, bucket=None):
+def prepare_pixels(batch, bucket=None, *, allow_trailing_padding=False):
     x = batch["glyphs"].numpy()
     y = batch["targets"].numpy()
     if not np.isin(x, [0, 1]).all() or not np.isin(y, [0, 1]).all():
         raise ValueError("Only binary inputs are supported")
-    if not bool(batch["attention_mask"].all()):
-        raise ValueError("This probe requires full input windows; loss masks remain separate")
+    attention = batch["attention_mask"].bool()
+    if not bool(attention.all()):
+        if not allow_trailing_padding:
+            raise ValueError("This probe requires full input windows; loss masks remain separate")
+        if bool((~attention[:, :-1] & attention[:, 1:]).any()):
+            raise ValueError("Only trailing padding is safe with omitted causal attention masks")
+        if bool((batch["loss_mask"].bool() & ~attention).any()):
+            raise ValueError("Padding cannot contribute training loss")
     joined = np.concatenate((x.reshape(-1, 1024), y.reshape(-1, 1024)))
     packed = np.packbits(joined, axis=1)
     unique, inverse = np.unique(packed, axis=0, return_inverse=True)
@@ -145,7 +151,7 @@ def install_xformers():
             bias = attn_mask
             if bias.dtype == torch.bool:
                 bias = torch.zeros_like(bias, dtype=q.dtype).masked_fill(~bias, float("-inf"))
-            bias = bias.expand(q.shape[0], q.shape[1], q.shape[2], k.shape[2]).contiguous()
+            bias = bias.to(dtype=q.dtype).expand(q.shape[0], q.shape[1], q.shape[2], k.shape[2])
         out = xo.memory_efficient_attention(
             q.transpose(1, 2).contiguous(),
             k.transpose(1, 2).contiguous(),

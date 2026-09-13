@@ -20,7 +20,8 @@ from hansgpt_research.train_glyph_lm import autocast_context, runtime_metadata, 
 
 
 def select_documents(dataset, count, seed):
-    pages = pq.read_table(dataset.data_dir / "test.parquet", columns=["source_page_id"])
+    split = getattr(dataset, "split", "test")
+    pages = pq.read_table(dataset.data_dir / f"{split}.parquet", columns=["source_page_id"])
     page_ids = pages["source_page_id"].to_pylist()
     if len(page_ids) != len(dataset.offsets) - 1:
         raise ValueError("Parquet documents and glyph offsets disagree")

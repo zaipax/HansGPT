@@ -21,6 +21,8 @@ from hansgpt_research.conditional_glyph_vae import (
     gaussian_log_prob,
     sample_gaussian,
 )
+from hansgpt_research.cvae_fixed_step import FixedBackward, install_xformers
+from hansgpt_research.cvae_search_training import SharedGlyphCollator, checkpoint_latest
 from hansgpt_research.cvae_training_optimization import make_head_kernel, optimized_backward
 from hansgpt_research.glyph_lm import GlyphSequenceDataset, collate_glyph_sequences
 from hansgpt_research.glyph_readability import analyze_readability
@@ -250,7 +252,8 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
     diversity_keys = [helpers["bitmap_key"](grid) for grid in diverse.cpu().numpy()]
     result = helpers["generation_summary"](p, g, labels, controls)
     result.update(
-        protocol=f"{count} test pages; one prior z per glyph; threshold .5; raw feedback only",
+        protocol=f"{count} {ds.split} pages; prior-only z; threshold .5; raw feedback only",
+        evaluation_split=ds.split,
         source_pages=pages,
     )
     readability = analyze_readability(ds, p, g, result["samples"], output, device)
@@ -264,6 +267,7 @@ def final_evaluation(model, ds, cfg, output, smoke=False):
             "CVAE: prior-only generation",
         )
     evidence = dict(
+        evaluation_split=ds.split,
         importance_samples=len(weights),
         evaluated_positions=len(y),
         iwae_estimate_nats_per_pixel=float(estimate),
@@ -313,8 +317,11 @@ def main():
     parser.add_argument("--mode", choices=["toy", "smoke", "full"], default="full")
     parser.add_argument("--toy-steps", type=int, default=2000)
     parser.add_argument("--smoke-han", type=int, default=8192)
+    parser.add_argument("--smoke-cursor", type=int, default=0)
     parser.add_argument("--config", default="configs/experiments/conditional_vae_1m.json")
     args = parser.parse_args()
+    if args.smoke_cursor < 0 or (args.smoke_cursor and args.mode != "smoke"):
+        raise ValueError("Nonzero smoke cursor is only valid for smoke mode")
     config = json.loads(Path(args.config).read_text())
     physical_gpu = config.get("gpu", 5)
     if (
@@ -323,6 +330,8 @@ def main():
     ):
         raise RuntimeError(f"Use physical GPU{physical_gpu} with explicit PCI ordering")
     cfg = config["training"]
+    if cfg.get("attention_backend") == "xformers":
+        install_xformers()
     if args.mode == "smoke":
         if args.smoke_han <= 0:
             raise ValueError("Smoke Han budget must be positive")
@@ -376,26 +385,44 @@ def main():
     validation = GlyphSequenceDataset(config["data"], "validation", cfg["sequence_length"])
     subset, selection = validation_subset(validation, cfg)
     lengths = sequence_lengths(dataset)
-    han_lookup = torch.zeros(len(dataset.glyph_bank), dtype=torch.bool, device=device)
+    shared_training = cfg.get("shared_glyph_training", False)
+    han_lookup_cpu = torch.zeros(len(dataset.glyph_bank), dtype=torch.bool)
     for char, index in dataset.inventory["characters"].items():
         if regex.fullmatch(r"[\p{Unified_Ideograph}〇]", char):
-            han_lookup[int(index)] = True
+            han_lookup_cpu[int(index)] = True
+    han_lookup = han_lookup_cpu if shared_training else han_lookup_cpu.to(device)
     optimizer = optimizer_for(model, cfg)
     scaler = torch.amp.GradScaler("cuda")
+    shared_step = None
+    if shared_training:
+        if (
+            cfg.get("attention_backend") != "xformers"
+            or cfg.get("gradient_accumulation_steps", 1) != 1
+        ):
+            raise ValueError("Shared search training requires xFormers and accumulation one")
+        shared_step = FixedBackward(
+            model,
+            cfg["batch_size"],
+            cfg["sequence_length"],
+            cfg["head_chunk_size"],
+            compiled=cfg.get("compile_head", True),
+        )
+        scaler.scale(torch.zeros((), device=device))
     head_kernel = (
         make_head_kernel(model, compiled=cfg.get("compile_head", False))
-        if cfg.get("optimized_backward", False)
+        if cfg.get("optimized_backward", False) and not shared_training
         else None
     )
     progress = dict(
         epoch=0,
-        cursor=0,
+        cursor=args.smoke_cursor,
         steps=0,
         han=0,
         all_targets=0,
         attempted_han=0,
         overflows=0,
         last_validation_han=0,
+        last_checkpoint_han=0,
     )
     started = time.monotonic()
     best = float("inf")
@@ -429,10 +456,20 @@ def main():
         progress["last_validation_han"] = progress["han"]
         if metrics["negative_elbo_per_pixel"] < best:
             best = metrics["negative_elbo_per_pixel"]
-            save_checkpoint(
-                checkpoints / "best.pt", model, optimizer, scaler, dict(progress), metadata
-            )
-        if progress["han"]:
+            if cfg.get("checkpoint_policy") != "latest_final":
+                save_checkpoint(
+                    checkpoints / "best.pt", model, optimizer, scaler, dict(progress), metadata
+                )
+        if cfg.get("checkpoint_policy") == "latest_final":
+            checkpoint_due = progress["han"] == cfg["target_han"] or progress["han"] - progress[
+                "last_checkpoint_han"
+            ] >= cfg.get("checkpoint_every_han", cfg["validate_every_han"])
+            if checkpoint_due:
+                progress["last_checkpoint_han"] = progress["han"]
+                checkpoint_latest(
+                    checkpoints / "latest.pt", model, optimizer, scaler, dict(progress), metadata
+                )
+        elif progress["han"]:
             save_checkpoint(
                 checkpoints / "latest.pt", model, optimizer, scaler, dict(progress), metadata
             )
@@ -448,16 +485,24 @@ def main():
                 sampler=sampler,
                 num_workers=cfg["num_workers"],
                 pin_memory=True,
-                collate_fn=collate_glyph_sequences,
+                collate_fn=(
+                    SharedGlyphCollator(
+                        cfg["batch_size"], cfg["sequence_length"], dataset.control_ids["PAD"]
+                    )
+                    if shared_training
+                    else collate_glyph_sequences
+                ),
                 generator=torch.Generator().manual_seed(cfg["seed"] + progress["epoch"]),
             )
             for cpu in loader:
                 if progress["han"] >= cfg["target_han"]:
                     break
-                batch = move_batch(cpu, device)
+                batch = cpu if shared_training else move_batch(cpu, device)
                 is_han = han_lookup[batch["target_ids"]]
                 mask = trim_han_budget(
-                    batch["loss_mask"], is_han, cfg["target_han"] - progress["han"]
+                    batch["mask"] if shared_training else batch["loss_mask"],
+                    is_han,
+                    cfg["target_han"] - progress["han"],
                 ).bool()
                 han = int(is_han[mask].sum())
                 total = int(mask.sum())
@@ -470,10 +515,49 @@ def main():
                 )
                 for group in optimizer.param_groups:
                     group["lr"] = learning_rate(progress["han"] + han, cfg)
-                with torch.autocast("cuda", dtype=torch.float16):
-                    hidden = model.forward_hidden(batch["glyphs"], batch["attention_mask"])[mask]
-                targets = batch["targets"][mask]
-                if head_kernel is not None:
+                if shared_training:
+                    prepared = {
+                        key: cpu[key].to(device, non_blocking=True)
+                        for key in ["tiles", "x_index", "y_index", "targets"]
+                    }
+                    prepared["mask"] = mask.to(device, non_blocking=True)
+                    noise = torch.randn(
+                        (cfg["batch_size"] * cfg["sequence_length"], config["vae"]["latent_dim"]),
+                        device=device,
+                    )
+                    retries = 0
+                    while True:
+                        optimizer.zero_grad(set_to_none=True)
+                        sums = shared_step(
+                            **prepared, noise=noise, scale=scaler._get_scale_async(), beta=beta
+                        )
+                        recon_sum, kl_sum = sums.tolist()
+                        if not math.isfinite(recon_sum) or not math.isfinite(kl_sum):
+                            raise FloatingPointError(
+                                "Nonfinite shared-path loss; no optimizer update"
+                            )
+                        update = complete_optimizer_step(
+                            optimizer, scaler, model.parameters(), cfg["max_grad_norm"]
+                        )
+                        if update["succeeded"]:
+                            break
+                        retries += 1
+                        progress["overflows"] += 1
+                        progress["attempted_han"] += han
+                        log("amp_retry_same_batch", optimizer_update=update)
+                        if retries >= 20:
+                            raise FloatingPointError("Repeated AMP overflow on identical batch")
+                    # Noise and data stay fixed on retries, preserving the successful
+                    # training prefix across all learning-rate candidates.
+                else:
+                    with torch.autocast("cuda", dtype=torch.float16):
+                        hidden = model.forward_hidden(batch["glyphs"], batch["attention_mask"])[
+                            mask
+                        ]
+                    targets = batch["targets"][mask]
+                if shared_training:
+                    pass
+                elif head_kernel is not None:
                     recon_sum, kl_sum = optimized_backward(
                         model, hidden, targets, scaler, cfg["head_chunk_size"], beta, head_kernel
                     )
@@ -505,10 +589,13 @@ def main():
                     if leaf.grad is None:
                         raise RuntimeError("Missing context gradient")
                     hidden.backward(leaf.grad)
-                update = complete_optimizer_step(
-                    optimizer, scaler, model.parameters(), cfg["max_grad_norm"]
+                if not shared_training:
+                    update = complete_optimizer_step(
+                        optimizer, scaler, model.parameters(), cfg["max_grad_norm"]
+                    )
+                progress["cursor"] += (
+                    cpu["source_batch_size"] if shared_training else len(cpu["glyphs"])
                 )
-                progress["cursor"] += len(cpu["glyphs"])
                 progress["attempted_han"] += han
                 if update["succeeded"]:
                     progress["steps"] += 1
@@ -537,11 +624,17 @@ def main():
                 progress["cursor"] = 0
         validate()
         assert progress["han"] == cfg["target_han"]
-        save_checkpoint(
-            checkpoints / "final.pt", model, optimizer, scaler, dict(progress), metadata
-        )
+        if cfg.get("checkpoint_policy") == "latest_final":
+            os.link(checkpoints / "latest.pt", checkpoints / "final.pt")
+        else:
+            save_checkpoint(
+                checkpoints / "final.pt", model, optimizer, scaler, dict(progress), metadata
+            )
         status("prior_evaluation")
-        test = GlyphSequenceDataset(config["data"], "test", cfg["sequence_length"])
+        evaluation_split = cfg.get("evaluation_split", "test")
+        if evaluation_split not in ("validation", "test"):
+            raise ValueError("Final evaluation must use a held-out split")
+        test = GlyphSequenceDataset(config["data"], evaluation_split, cfg["sequence_length"])
         evidence = final_evaluation(model, test, cfg, output, args.mode == "smoke")
         write_json(
             output / "complete.json",

@@ -19,6 +19,7 @@ from benchmark_cvae_multigpu import sync_gradients
 from hansgpt_research.train_attention_glyph_lm import model_from_config, validate_nll, generation_diagnostic
 from hansgpt_research.byte_training import ByteBackward, ByteCollator, DEFAULT_ACCELERATION
 from hansgpt_research.position_schedule import position_learning_rate
+from hansgpt_research.checkpoint_retention import prune_run_checkpoints
 from hansgpt_research.cvae_distributed_data import PaddedDataset, RankBatches, select_global_positions
 from hansgpt_research.cvae_fixed_step import install_xformers
 from hansgpt_research.glyph_lm import GlyphSequenceDataset
@@ -160,6 +161,12 @@ def main():
                     metadata=metadata), temporary)
                 temporary.replace(path)
                 log('checkpoint', path=str(path), sha256=sha256(path), replica_max_difference=0)
+                if cfg.get('keep_recent_checkpoints'):
+                    deleted=prune_run_checkpoints(checkpoints,
+                        keep_recent=cfg['keep_recent_checkpoints'],
+                        retain_every=cfg['retain_every_positions'],final_position=cfg['target_tokens'])
+                    if deleted:
+                        log('checkpoint_retention', removed=deleted)
             dist.barrier()
 
         validate()

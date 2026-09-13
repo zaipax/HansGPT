@@ -9,7 +9,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from hansgpt_research.byte_glyph_decoder import pack_glyph_bytes
 from hansgpt_research.cvae_fixed_step import install_xformers
 from hansgpt_research.packed_glyph_data import PackedGlyphSequenceDataset
 from hansgpt_research.train_attention_glyph_lm import model_from_config
@@ -43,6 +42,10 @@ def main():
     try:
         # Reproduce saved short-prompt symptom under multiple inference backends.
         prior=np.load(root/'review8/generation.npz')
+        old=np.load('artifacts/logs/hansgpt_abc_r2_c/generation_step00001505.npz')['generated']
+        report['historical_1505_step_output']=dict(
+            unique_bitmaps=len(np.unique(old.reshape(-1,1024),axis=0)),
+            equals_current_comma=bool(np.array_equal(old.reshape(-1,1024)[0],prior['generated'].reshape(-1,1024)[0])))
         prompts=torch.from_numpy(prior['prompts']).cuda()
         with torch.autocast('cuda',dtype=torch.float16):
             h=model.forward_hidden(prompts)[:,-1]
@@ -90,13 +93,11 @@ def main():
         # Same contexts, changing only categorical temperature. These are raw
         # samples; nearest-font scoring never replaces generated feedback.
         report['sampling']={}
-        sampled_for_image=[]
         for temperature in [0.7,1.0,1.2]:
             with torch.autocast('cuda',dtype=torch.float16):
                 sampled=model.byte_decoder.generate(hidden,strategy='sample',temperature=temperature,
                     generator=torch.Generator(device='cuda').manual_seed(20260913))
             report['sampling'][str(temperature)]=summarize(sampled)
-            sampled_for_image.append(sampled.cpu().numpy())
         with torch.autocast('cuda',dtype=torch.float16):
             same=model.byte_decoder.generate(hidden[:1].expand(64,-1),strategy='sample',
                 generator=torch.Generator(device='cuda').manual_seed(20260913))

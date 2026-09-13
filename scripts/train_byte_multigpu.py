@@ -122,7 +122,7 @@ def main():
             dist.barrier()
             if rank == 0:
                 status('validation')
-                log('validation', metrics=validate_nll(model, subset, selection, cfg, device))
+                log('validation', metrics=validate_nll(model, subset, selection, dict(cfg,num_workers=0), device))
             dist.barrier()
             model.train()
 

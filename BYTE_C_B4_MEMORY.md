@@ -34,3 +34,29 @@ This single-GPU test leaves substantial headroom on a 31.74-GiB card, but does
 not measure the additional NCCL communication allocation or guarantee the
 worst-case batch across the entire corpus. No four-GPU training was launched
 as part of this memory-only request.
+
+## Matched batch8 follow-up
+
+GPU7 subsequently ran the same global-schedule memory probe at batch8, with
+context1024/head2048/no recomputation unchanged. Configuration:
+`configs/experiments/hansgpt_byte_c_single_b8_memory.json`; implementation/config
+commit `5df2cba`. Both the three-update smoke and 110-update run passed.
+
+| Metric, after ten warmups | Batch4 | Batch8 |
+| --- | ---: | ---: |
+| Measured updates | 100 | 100 |
+| Measured seconds | 59.648 | 111.816 |
+| Effective positions/s | 6,817.22 | 7,274.83 |
+| Peak allocated GiB | 20.818 | 26.181 |
+| Peak reserved GiB | 21.980 | 27.818 |
+| Sampled device-use range GiB | 22.350–22.366 | 28.192–28.204 |
+| AMP overflow | 0 | 0 |
+
+Batch8 improves measured position throughput by 6.71%, while device occupancy
+increases by about 5.84 GiB. Each update processes approximately twice as many
+positions, so equal-position training makes about half as many updates; this
+memory benchmark does not determine which batch learns better. Neither row
+includes multi-GPU communication buffers.
+
+The batch8 run consumed 894,826 valid positions including 800,850 Han. Final
+weights, status and results use `hansgpt_byte_c_single_b8_h2048_memory_v1_full`.

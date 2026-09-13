@@ -92,3 +92,28 @@ under `cvae_tricks_v2`; they are not counted as successful final results.
 
 All GPU benchmark processes and obsolete local source-transfer servers were
 stopped/finished after measurement.
+
+## GPU 7 follow-up without Apex
+
+Both variants used PyTorch fused AdamW, the same fixed preparation, model/data,
+compiled head and initialization/noise seed. Each ran 24 measured updates after
+two warmups, sequentially on GPU 7.
+
+| Variant | Targets/s | Steady device GiB | Reserved GiB |
+| --- | ---: | ---: | ---: |
+| xFormers | 7647 | 17.11 | 16.73 |
+| xFormers + CUDA Graph | 7026 | 25.94 | 23.97 |
+
+The graph combination was 8.12% slower and used 8.82 GiB more steady device memory.
+All 48 measured updates succeeded. Maximum paired reconstruction-BCE difference
+was 9.01e-8 and gradient-norm difference 3.35e-6. CPU preparation cost approximately
+0.31 s/batch and is excluded from the throughput, as in the initial experiment.
+
+Removing Apex does not remove the observed graph-combination penalty. This finding
+applies to this capture implementation and workload, not CUDA Graphs in general;
+kernel-level profiling would be needed to identify the precise cause. The preferred
+configuration remains xFormers + compiled head + PyTorch fused AdamW, without Apex.
+
+Source: `15e5c4b`. Server/local artifact directory:
+`artifacts/reports/xformers_graph_gpu7/`, including `summary.json` and both per-run
+metadata/results. GPU 7 was released when both probes completed.

@@ -15,13 +15,17 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 
-from benchmark_cvae_multigpu import sync_gradients
 from hansgpt_research.train_attention_glyph_lm import model_from_config, validate_nll, generation_diagnostic
 from hansgpt_research.byte_training import ByteBackward, ByteCollator, DEFAULT_ACCELERATION
 from hansgpt_research.position_schedule import position_learning_rate
 from hansgpt_research.checkpoint_retention import prune_run_checkpoints
 from hansgpt_research.cvae_distributed_data import PaddedDataset, RankBatches, select_global_positions
 from hansgpt_research.cvae_fixed_step import install_xformers
+from hansgpt_research.distributed_sync import (
+    DEFAULT_GRADIENT_REDUCE_BUCKET_MIB,
+    allocate_gradient_reduce_buffer,
+    sync_gradients,
+)
 from hansgpt_research.glyph_lm import GlyphSequenceDataset
 from hansgpt_research.packed_glyph_data import PackedGlyphSequenceDataset
 from hansgpt_research.train_glyph_lm import (
@@ -39,6 +43,7 @@ def main():
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
     cfg = config['training']
+    bucket_mib = int(cfg.get('gradient_reduce_bucket_mib', DEFAULT_GRADIENT_REDUCE_BUCKET_MIB))
     for key, value in DEFAULT_ACCELERATION.items():
         cfg.setdefault(key, value)
     if any(cfg[k] != v for k,v in DEFAULT_ACCELERATION.items()) or config['variant'] != 'C':
@@ -102,6 +107,7 @@ def main():
                 budget_unit='global successful valid prediction positions, including punctuation/controls',
                 schedule_unit='global successful valid prediction positions',
                 synchronization='FP32 NCCL SUM after full chunked backward, weighted by valid targets',
+                gradient_reduce_bucket_mib=bucket_mib,
                 nccl_environment={k:v for k,v in os.environ.items() if k.startswith('NCCL_')})
             write_json(output / 'metadata.json', metadata)
         ds = PackedGlyphSequenceDataset(config['data'], 'train', cfg['sequence_length'])
@@ -121,7 +127,7 @@ def main():
         scaler.scale(torch.ones((), device=device))
         backward = ByteBackward(model, cfg['batch_size'], cfg['sequence_length'],
                                  cfg['head_chunk_size'], compiled=True)
-        buffer = torch.empty(8 * 1024 * 1024, device=device)
+        buffer = allocate_gradient_reduce_buffer(device, bucket_mib)
 
         def validate():
             dist.barrier()

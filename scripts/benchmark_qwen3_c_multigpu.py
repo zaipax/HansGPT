@@ -1,10 +1,9 @@
-"""Measure synchronized Qwen3-style C training throughput on physical GPUs 0-3.
+"""Measure synchronized Qwen3-style C training throughput on four selected GPUs.
 
 The benchmark uses real full-length windows from the pinned packed corpus. Glyph
 bytes are prepared and transferred before timing; each measured update includes
 the outer forward/backward, chunked byte loss, FP32 gradient all-reduce, and the
-optimizer update. It never writes checkpoints or touches the independent GPU4-7
-training run.
+optimizer update. It never writes checkpoints or mutates training artifacts.
 """
 
 from __future__ import annotations
@@ -19,10 +18,14 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.distributed as dist
-from benchmark_cvae_multigpu import sync_gradients
 
 from hansgpt_research.byte_training import ByteBackward, ByteCollator
 from hansgpt_research.cvae_fixed_step import install_xformers
+from hansgpt_research.distributed_sync import (
+    DEFAULT_GRADIENT_REDUCE_BUCKET_MIB,
+    allocate_gradient_reduce_buffer,
+    sync_gradients,
+)
 from hansgpt_research.packed_glyph_data import PackedGlyphSequenceDataset
 from hansgpt_research.train_attention_glyph_lm import model_from_config
 from hansgpt_research.train_glyph_lm import runtime_metadata, sequence_lengths, sha256, write_json
@@ -47,12 +50,17 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--warmup", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--gradient-bucket-mib", type=int, default=None)
+    parser.add_argument("--physical-gpus", default="0,1,2,3")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if visible != "0,1,2,3":
-        raise RuntimeError("This benchmark requires CUDA_VISIBLE_DEVICES=0,1,2,3")
+    gpu_ids = args.physical_gpus.split(",")
+    if len(gpu_ids) != 4 or len(set(gpu_ids)) != 4 or any(not item.isdigit() for item in gpu_ids):
+        raise ValueError("--physical-gpus must contain four distinct comma-separated GPU IDs")
+    if visible != args.physical_gpus:
+        raise RuntimeError(f"Set CUDA_VISIBLE_DEVICES={args.physical_gpus}")
     if os.environ.get("CUDA_DEVICE_ORDER") != "PCI_BUS_ID":
         raise RuntimeError("Set CUDA_DEVICE_ORDER=PCI_BUS_ID for physical GPU selection")
     rank = int(os.environ["RANK"])
@@ -67,7 +75,12 @@ def main() -> None:
     batch_size = int(args.batch_size if args.batch_size is not None else cfg["batch_size"])
     steps = int(args.steps if args.steps is not None else cfg["benchmark_steps"])
     warmup = int(args.warmup if args.warmup is not None else cfg["benchmark_warmup_steps"])
-    if min(batch_size, steps, warmup) < 1:
+    bucket_mib = int(
+        args.gradient_bucket_mib
+        if args.gradient_bucket_mib is not None
+        else cfg.get("gradient_reduce_bucket_mib", DEFAULT_GRADIENT_REDUCE_BUCKET_MIB)
+    )
+    if min(batch_size, steps, warmup, bucket_mib) < 1:
         raise ValueError("batch size, measured steps and warmup steps must be positive")
     if config.get("variant") != "C" or config.get("architecture") != "qwen3_dense_attention_only":
         raise ValueError("The benchmark requires the Qwen3-style pure C configuration")
@@ -115,7 +128,7 @@ def main() -> None:
             key: cpu[key].to(device, non_blocking=True)
             for key in ("tiles", "indices", "byte_targets", "mask")
         }
-        reduce_buffer = torch.empty(8 * 1024 * 1024, device=device)
+        reduce_buffer = allocate_gradient_reduce_buffer(device, bucket_mib)
 
         def update() -> dict:
             optimizer.zero_grad(set_to_none=True)
@@ -126,13 +139,21 @@ def main() -> None:
             dist.all_reduce(sums)
             if not bool(torch.isfinite(sums).all()):
                 raise FloatingPointError("Nonfinite distributed byte loss")
+            sync_started = torch.cuda.Event(enable_timing=True)
+            sync_finished = torch.cuda.Event(enable_timing=True)
+            sync_started.record()
             sync_gradients(parameters, reduce_buffer)
+            sync_finished.record()
             result = complete_optimizer_step(optimizer, scaler, parameters, cfg["max_grad_norm"])
             success = torch.tensor(int(result["succeeded"]), device=device)
             dist.all_reduce(success, op=dist.ReduceOp.MIN)
             if int(success) != 1:
                 raise FloatingPointError("AMP overflow during throughput benchmark")
-            return {"loss_sum": float(sums), "optimizer": result}
+            return {
+                "loss_sum": float(sums),
+                "optimizer": result,
+                "sync_events": (sync_started, sync_finished),
+            }
 
         for _ in range(warmup):
             update()
@@ -151,12 +172,23 @@ def main() -> None:
                     "seconds": time.perf_counter() - row_started,
                     "global_targets": global_targets,
                     "nll_per_pixel": result["loss_sum"] / (global_targets * 1024),
+                    "gradient_sync_seconds": result["sync_events"][0].elapsed_time(
+                        result["sync_events"][1]
+                    )
+                    / 1000,
                 }
             )
         torch.cuda.synchronize(device)
         local_elapsed = time.perf_counter() - started
         elapsed = torch.tensor(local_elapsed, dtype=torch.float64, device=device)
         dist.all_reduce(elapsed, op=dist.ReduceOp.MAX)
+        local_mean_sync = torch.tensor(
+            sum(row["gradient_sync_seconds"] for row in rows) / len(rows),
+            dtype=torch.float64,
+            device=device,
+        )
+        mean_syncs = [torch.zeros_like(local_mean_sync) for _ in range(world)]
+        dist.all_gather(mean_syncs, local_mean_sync)
         memory = torch.tensor(
             [torch.cuda.max_memory_allocated(device), torch.cuda.max_memory_reserved(device)],
             dtype=torch.float64,
@@ -182,11 +214,17 @@ def main() -> None:
                 "global_batch_size": world * batch_size,
                 "context": context,
                 "head_chunk_size": cfg["head_chunk_size"],
+                "gradient_reduce_bucket_mib": bucket_mib,
+                "gradient_reduce_bucket_elements": reduce_buffer.numel(),
                 "warmup_steps": warmup,
                 "measured_steps": steps,
                 "global_targets_per_update": global_targets,
                 "measured_seconds": float(elapsed),
                 "global_targets_per_second": global_targets * steps / float(elapsed),
+                "per_rank_mean_gradient_sync_seconds": [float(item) for item in mean_syncs],
+                "max_mean_gradient_sync_seconds": max(float(item) for item in mean_syncs),
+                "gradient_sync_fraction_of_step": max(float(item) for item in mean_syncs)
+                / (float(elapsed) / steps),
                 "per_rank_peak_allocated_gib": [float(item[0]) / 2**30 for item in memories],
                 "per_rank_peak_reserved_gib": [float(item[1]) / 2**30 for item in memories],
                 "rows": rows,
@@ -195,7 +233,7 @@ def main() -> None:
                     "outer forward/backward, byte-head loss, NCCL gradient all-reduce and "
                     "fused AdamW update; excludes model construction and data preparation."
                 ),
-                "gpu_isolation": "CUDA_VISIBLE_DEVICES=0,1,2,3; GPU4-7 are not selected",
+                "gpu_isolation": f"CUDA_VISIBLE_DEVICES={visible}",
             }
             write_json(output, report)
             print(json.dumps(report, ensure_ascii=False), flush=True)

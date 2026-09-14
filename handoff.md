@@ -4,6 +4,13 @@
 
 The active research direction is the pure Transformer C architecture: 4×4 patch self-attention glyph encoder, 24-layer width-1024 GQA GPT backbone (16Q/4KV, FFN 2816), and a 4-layer width-256 causal byte Transformer (8 heads, FFN 768) that autoregressively emits 128 bytes and reconstructs one 32×32 binary glyph. Actual baseline size is 275,349,504 parameters. Full design and prior ABC results are in `ATTENTION_ABC_R2.md` and `reports/attention_abc_r2/REPORT.md`.
 
+## Active training
+
+- A fresh Qwen3-style C 1.5B full-corpus run is active on physical GPUs 4–7 from commit `27c705d`. The configuration is `configs/experiments/hansgpt_qwen3_c_1p5b_gpu4_7_full_corpus.json`: per-rank batch 4 (global batch 16), context 1024, head chunk 1024, FP16, backbone recomputation, xFormers and fused AdamW.
+- The LR is `2e-4` peak with a 20,000,000-target linear warmup, then global cosine to `2e-5` over the verified 1,089,139,385-target corpus horizon. Checkpoints are written every 100,000,000 targets and retained at those milestones plus the recent retention window.
+- The run is in tmux session `qwen3-1p5b-4567` on the training server, with console log `artifacts/logs/qwen3_1p5b_gpu4_7_full.console.log` and status under `artifacts/logs/hansgpt_qwen3_c_1p5b_gpu4_7_full_corpus_v1_full/status.json`. At the first check it had 38 successful updates and 617,982 targets with zero AMP overflows; peak device use was about 28.8 GiB per card.
+- The required PCIe fallback variables are `NCCL_P2P_DISABLE=1` and `NCCL_CUMEM_HOST_ENABLE=0`. `uv sync --frozen` removed the undeclared xFormers package, so the server project environment restored `xformers==0.0.32.post2` with `uv` before launch.
+
 ## Experiments completed
 
 - CVAE learning-rate search: 8 GPUs, bsz10, ctx1024, chunk2048, 10M Han each. Best validation convergence was peak LR `3e-4`; high LR `8e-4` was poor. This was posterior reconstruction, not fluent generation.

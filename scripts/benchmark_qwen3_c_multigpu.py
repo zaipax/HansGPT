@@ -1,4 +1,4 @@
-"""Measure synchronized Qwen3-style C training throughput on four selected GPUs.
+"""Measure synchronized Qwen3-style C training throughput on selected GPUs.
 
 The benchmark uses real full-length windows from the pinned packed corpus. Glyph
 bytes are prepared and transferred before timing; each measured update includes
@@ -57,8 +57,12 @@ def main() -> None:
 
     visible = os.environ.get("CUDA_VISIBLE_DEVICES")
     gpu_ids = args.physical_gpus.split(",")
-    if len(gpu_ids) != 4 or len(set(gpu_ids)) != 4 or any(not item.isdigit() for item in gpu_ids):
-        raise ValueError("--physical-gpus must contain four distinct comma-separated GPU IDs")
+    if len(gpu_ids) < 2 or len(set(gpu_ids)) != len(gpu_ids) or any(
+        not item.isdigit() for item in gpu_ids
+    ):
+        raise ValueError(
+            "--physical-gpus must contain at least two distinct comma-separated GPU IDs"
+        )
     if visible != args.physical_gpus:
         raise RuntimeError(f"Set CUDA_VISIBLE_DEVICES={args.physical_gpus}")
     if os.environ.get("CUDA_DEVICE_ORDER") != "PCI_BUS_ID":
@@ -66,8 +70,8 @@ def main() -> None:
     rank = int(os.environ["RANK"])
     local = int(os.environ["LOCAL_RANK"])
     world = int(os.environ["WORLD_SIZE"])
-    if world != 4 or local not in range(world):
-        raise RuntimeError("This benchmark requires four torchrun ranks")
+    if world != len(gpu_ids) or local not in range(world):
+        raise RuntimeError("WORLD_SIZE must match the number of selected physical GPUs")
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
     cfg = config["training"]

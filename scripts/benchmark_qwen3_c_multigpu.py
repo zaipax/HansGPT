@@ -93,7 +93,6 @@ def main() -> None:
 
     torch.cuda.set_device(local)
     device = torch.device("cuda", local)
-    dist.init_process_group("nccl", device_id=device, timeout=timedelta(minutes=30))
     try:
         torch.set_num_threads(4)
         torch.manual_seed(cfg["seed"])
@@ -109,15 +108,16 @@ def main() -> None:
         local_indices = full_indices[rank * batch_size : (rank + 1) * batch_size]
         cpu = ByteCollator()([dataset[int(index)] for index in local_indices])
         local_targets = int(cpu["mask"].sum())
-        counts = _all_gather_count(local_targets, device, world)
-        global_targets = sum(counts)
-        if not local_targets or not global_targets:
-            raise ValueError("Benchmark requires nonempty target counts on every rank")
 
         model = model_from_config(config).to(device).train()
         if cfg["gradient_checkpointing"]:
             model.gradient_checkpointing_enable()
         parameters = list(model.parameters())
+        dist.init_process_group("nccl", device_id=device, timeout=timedelta(minutes=30))
+        counts = _all_gather_count(local_targets, device, world)
+        global_targets = sum(counts)
+        if not local_targets or not global_targets:
+            raise ValueError("Benchmark requires nonempty target counts on every rank")
         for parameter in parameters:
             dist.broadcast(parameter.data, src=0)
         optimizer = optimizer_for(model, cfg)
@@ -239,7 +239,8 @@ def main() -> None:
             print(json.dumps(report, ensure_ascii=False), flush=True)
         dist.barrier()
     finally:
-        dist.destroy_process_group()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 if __name__ == "__main__":

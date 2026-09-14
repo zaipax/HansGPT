@@ -60,7 +60,6 @@ def main():
     checkpoints = Path('artifacts/checkpoints') / name
     torch.cuda.set_device(local)
     device = torch.device('cuda', local)
-    dist.init_process_group('nccl', device_id=device, timeout=timedelta(minutes=30))
     torch.set_num_threads(4)
     torch.manual_seed(cfg['seed'])
     np.random.seed(cfg['seed'])
@@ -87,16 +86,17 @@ def main():
             print(json.dumps(row), flush=True)
 
     try:
-        if rank == 0:
-            for directory in [output, logs, checkpoints]:
-                directory.mkdir(parents=True, exist_ok=False)
-        dist.barrier()
-        status('initializing')
         install_xformers()
         model = model_from_config(config).to(device).train()
         if cfg['gradient_checkpointing']:
             model.backbone.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant':False})
         parameters = list(model.parameters())
+        dist.init_process_group('nccl', device_id=device, timeout=timedelta(minutes=30))
+        if rank == 0:
+            for directory in [output, logs, checkpoints]:
+                directory.mkdir(parents=True, exist_ok=False)
+        dist.barrier()
+        status('initializing')
         for p in parameters:
             dist.broadcast(p.data, 0)
         metadata = None
@@ -282,7 +282,8 @@ def main():
             status('failed', 'failed', error=str(error))
         raise
     finally:
-        dist.destroy_process_group()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 if __name__ == '__main__':

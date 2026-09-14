@@ -52,6 +52,32 @@ def test_default_architecture_has_exact_agreed_parameter_count():
     assert model.pixel_head.bias is not None
 
 
+def test_qwen3_attention_adds_per_head_qk_norm_and_preserves_cache():
+    pytest.importorskip("transformers.models.qwen3.modeling_qwen3")
+    torch.manual_seed(7)
+    model = GlyphGPT(
+        small_config(
+            qk_norm=True,
+            rope_theta=1_000_000.0,
+        )
+    ).eval()
+    assert model.backbone.config.layer_types == ["full_attention"] * 2
+    assert model.backbone.config.sliding_window is None
+    for layer in model.backbone.layers:
+        attention = layer.self_attn
+        assert attention.q_norm.weight.shape == (8,)
+        assert attention.k_norm.weight.shape == (8,)
+    glyphs = binary_input(4)
+    with torch.no_grad():
+        full = model(glyphs)
+        prefix, cache = model(glyphs[:, :3], use_cache=True, return_cache=True)
+        incremental, _ = model(
+            glyphs[:, 3:], past_key_values=cache, use_cache=True, return_cache=True
+        )
+    torch.testing.assert_close(full[:, :3], prefix, atol=2e-6, rtol=2e-5)
+    torch.testing.assert_close(full[:, 3:], incremental, atol=2e-6, rtol=2e-5)
+
+
 def test_future_tiles_cannot_change_prefix_predictions_in_training_mode():
     torch.manual_seed(13)
     model = GlyphGPT(small_config()).train()

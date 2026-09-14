@@ -31,6 +31,7 @@ class ModelConfig:
     max_position_embeddings: int = 2048
     rms_norm_eps: float = 1e-6
     rope_theta: float = 10000.0
+    qk_norm: bool = False
     attention_dropout: float = 0.0
     initializer_range: float = 0.02
     deduplicate_glyphs: bool = True
@@ -57,6 +58,8 @@ class ModelConfig:
             raise ValueError("RoPE requires an even head dimension")
         if not 0 <= self.attention_dropout < 1:
             raise ValueError("attention_dropout must be in [0, 1)")
+        if not isinstance(self.qk_norm, bool):
+            raise ValueError("qk_norm must be boolean")
         if self.glyph_deduplication_strategy not in {"unpacked", "packed"}:
             raise ValueError("glyph_deduplication_strategy must be unpacked or packed")
 
@@ -162,6 +165,12 @@ class GlyphGPT(nn.Module):
             use_cache=False,
             _attn_implementation="sdpa",
         )
+        if config.qk_norm:
+            # Qwen3 applies independent RMSNorms on each query/key head before
+            # RoPE. Reuse the HF Qwen3 attention implementation while keeping
+            # the surrounding inputs_embeds-only LlamaModel contract.
+            transformer_config.layer_types = ["full_attention"] * config.num_hidden_layers
+            transformer_config.sliding_window = None
         self.backbone = LlamaModel(transformer_config)
         # Passing inputs_embeds alone would leave an unused character embedding.
         # Remove the module itself so checkpoints and parameter counts are honest.
@@ -170,6 +179,21 @@ class GlyphGPT(nn.Module):
         # token-embedding requires_grad hook for checkpointing. Our inputs already
         # carry the trainable CNN's autograd graph, with no token embedding to hook.
         self.backbone.main_input_name = "inputs_embeds"
+        if config.qk_norm:
+            try:
+                from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention
+            except ImportError as exc:
+                raise RuntimeError(
+                    "qk_norm requires a Transformers release with Qwen3Attention"
+                ) from exc
+            for layer_idx, layer in enumerate(self.backbone.layers):
+                original = layer.self_attn
+                replacement = Qwen3Attention(self.backbone.config, layer_idx)
+                for name in ("q_proj", "k_proj", "v_proj", "o_proj"):
+                    getattr(replacement, name).load_state_dict(
+                        getattr(original, name).state_dict()
+                    )
+                layer.self_attn = replacement
         self.pixel_head = nn.Linear(config.hidden_size, 1024, bias=True)
         nn.init.normal_(self.pixel_head.weight, std=config.initializer_range)
         nn.init.zeros_(self.pixel_head.bias)

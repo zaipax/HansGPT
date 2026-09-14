@@ -1,5 +1,5 @@
 {
-  "experiment": "scale_350m",
+  "experiment": "scale_350m_h128",
   "variant": "C",
   "data_requirements": {
     "corpus_type": "chinese_document_packed_v3",
@@ -47,7 +47,7 @@
     "sortish_pool_batches": 64,
     "log_every_steps": 10,
     "max_consecutive_overflows": 20,
-    "head_chunk_size": 256,
+    "head_chunk_size": 128,
     "freeze_backbone": false,
     "validation_samples": 128,
     "validation_batch_size": 32,

@@ -2,6 +2,18 @@
 
 ## Security boundary
 
+## Session handoff and server connection
+
+Read [`handoff.md`](handoff.md) before continuing experiments; it records the
+current architecture, completed runs, active training job, measured parameters,
+diagnoses and next goals. Keep it updated when a major experiment completes.
+
+Use [`SERVER_CONNECTIONS.md`](SERVER_CONNECTIONS.md) for the local-only server
+connection and proxy procedure. It contains sensitive infrastructure details;
+never commit, print, or copy those values into public documentation. Refer to
+the server symbolically as `HANSGPT_REMOTE_HOST`, `HANSGPT_REMOTE_PORT`, and
+`HANSGPT_REMOTE_USER`, and use interactive SSH authentication as required.
+
 This repository is public. Never commit or print server passwords, tokens, private keys, SSH connection strings, private endpoints, or secret-bearing `.env` files.
 
 - Remote host, port, and user are supplied out of band. Refer to them as `HANSGPT_REMOTE_HOST`, `HANSGPT_REMOTE_PORT`, and `HANSGPT_REMOTE_USER`.

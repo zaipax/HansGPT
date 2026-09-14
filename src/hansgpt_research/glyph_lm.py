@@ -21,6 +21,23 @@ from transformers import LlamaConfig, LlamaModel
 from transformers.models.llama.modeling_llama import LlamaRMSNorm
 
 
+class _Qwen3HeadRMSNorm(nn.Module):
+    """Qwen3 head RMSNorm that preserves autocast's input dtype."""
+
+    def __init__(self, hidden_size: int, eps: float) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states: Tensor) -> Tensor:
+        input_dtype = hidden_states.dtype
+        values = hidden_states.float()
+        values = values * torch.rsqrt(
+            values.pow(2).mean(dim=-1, keepdim=True) + self.variance_epsilon
+        )
+        return (self.weight.float() * values).to(input_dtype)
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     hidden_size: int = 768
@@ -193,6 +210,12 @@ class GlyphGPT(nn.Module):
                     getattr(replacement, name).load_state_dict(
                         getattr(original, name).state_dict()
                     )
+                replacement.q_norm = _Qwen3HeadRMSNorm(
+                    replacement.head_dim, config.rms_norm_eps
+                )
+                replacement.k_norm = _Qwen3HeadRMSNorm(
+                    replacement.head_dim, config.rms_norm_eps
+                )
                 layer.self_attn = replacement
         self.pixel_head = nn.Linear(config.hidden_size, 1024, bias=True)
         nn.init.normal_(self.pixel_head.weight, std=config.initializer_range)

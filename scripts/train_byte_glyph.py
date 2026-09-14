@@ -31,8 +31,8 @@ def main():
     for key,value in DEFAULT_ACCELERATION.items(): cfg.setdefault(key,value)
     if any(cfg[k]!=v for k,v in DEFAULT_ACCELERATION.items()):
         raise ValueError('This runner requires the default accelerated stack')
-    if os.environ.get('CUDA_VISIBLE_DEVICES')!='7' or config['variant']!='C':
-        raise ValueError('This experiment requires variant C on physical GPU7')
+    if config['variant']!='C' or not os.environ.get('CUDA_VISIBLE_DEVICES','').isdigit():
+        raise ValueError('This experiment requires variant C on one selected physical GPU')
     steps=3 if args.smoke else cfg['max_steps']
     name=config['experiment']+('_smoke' if args.smoke else '_full')
     output=Path('artifacts/reports')/name

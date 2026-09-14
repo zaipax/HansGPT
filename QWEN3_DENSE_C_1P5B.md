@@ -44,6 +44,7 @@ all-reduce, and optimizer update. Input preparation is done before timing.
 
 ```bash
 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0,1,2,3 \
+NCCL_P2P_DISABLE=1 NCCL_CUMEM_HOST_ENABLE=0 \
 torchrun --standalone --nproc_per_node=4 \
   scripts/benchmark_qwen3_c_multigpu.py \
   --output artifacts/logs/qwen3_c_1p5b_gpu0_3.json

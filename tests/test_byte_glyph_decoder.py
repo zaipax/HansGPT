@@ -216,6 +216,51 @@ def test_greedy_cached_and_uncached_generation_are_equal_and_return_binary_grids
     assert torch.equal(cached, uncached)
 
 
+@pytest.mark.parametrize(("strategy", "temperature"), [("greedy", 1.0), ("sample", 0.8)])
+def test_cached_generation_fast_path_matches_validated_step_by_step_reference(
+    strategy, temperature
+):
+    model = decoder().eval()
+    hidden = torch.randn(2, 12)
+
+    def reference(generator):
+        leading = hidden.shape[:-1]
+        token = torch.full((*leading, 1), BYTE_BOS, dtype=torch.long)
+        cache = None
+        generated = []
+        with torch.no_grad():
+            for _ in range(128):
+                logits, cache = model(hidden, token, cache=cache, use_cache=True)
+                scores = logits[..., -1, :].float()
+                if strategy == "greedy":
+                    value = scores.argmax(-1, keepdim=True)
+                else:
+                    probabilities = (scores / temperature).softmax(-1).reshape(-1, 256)
+                    value = torch.multinomial(probabilities, 1, generator=generator).reshape(
+                        *leading, 1
+                    )
+                generated.append(value.to(torch.uint8))
+                token = value
+        return unpack_glyph_bytes(torch.cat(generated, dim=-1))
+
+    expected = reference(torch.Generator().manual_seed(43))
+    actual = model.distribution(hidden).decode(
+        strategy=strategy,
+        temperature=temperature,
+        generator=torch.Generator().manual_seed(43),
+        use_cache=True,
+    )
+    assert torch.equal(actual, expected)
+
+
+def test_cached_generation_fast_path_rejects_nonfinite_logits():
+    model = decoder().eval()
+    with torch.no_grad():
+        model.byte_head.weight[0, 0] = float("nan")
+    with pytest.raises(FloatingPointError, match="nonfinite"):
+        model.distribution(torch.randn(1, 12)).decode(strategy="greedy", use_cache=True)
+
+
 def test_sampling_is_reproducible_and_preserves_each_outer_condition_shape():
     model = decoder().eval()
     hidden = torch.randn(1, 2, 12)

@@ -45,11 +45,6 @@ def _validate_bytes(values: Tensor, *, length: int | None = None, allow_bos: boo
 def unpack_glyph_bytes(values: Tensor) -> Tensor:
     """[...,128] bytes -> [...,1,32,32] strict uint8 0/1 pixels, with no glyph lookup."""
     _validate_bytes(values, length=GRID_BYTES)
-    return _unpack_glyph_bytes(values)
-
-
-def _unpack_glyph_bytes(values: Tensor) -> Tensor:
-    """Unpack byte values already known to have the required shape and range."""
     shifts = torch.arange(7, -1, -1, dtype=torch.uint8, device=values.device)
     bits = (values.to(torch.uint8).unsqueeze(-1) >> shifts) & 1
     return bits.reshape(*values.shape[:-1], 1, 32, 32)
@@ -241,32 +236,6 @@ class ConditionalByteDecoder(nn.Module):
         shifted = torch.cat((beginning, byte_targets[..., :-1].long()), dim=-1)
         return self(hidden, shifted)
 
-    def _decode_tokens(
-        self,
-        tokens: Tensor,
-        *,
-        leading: tuple[int, ...],
-        condition: Tensor,
-        offset: int,
-        previous_layers: tuple[tuple[Tensor, Tensor], ...] | None,
-        use_cache: bool,
-    ) -> tuple[Tensor, tuple[tuple[Tensor, Tensor], ...]]:
-        """Run prevalidated byte inputs so generation does not synchronize for every check."""
-        length = tokens.shape[-1]
-        positions = torch.arange(offset, offset + length, device=tokens.device)
-        embeddings = self.byte_embedding(tokens.reshape(-1, length))
-        embeddings = embeddings + self.position_embedding(positions) + condition.unsqueeze(1)
-        current = []
-        for index, block in enumerate(self.blocks):
-            previous = None if previous_layers is None else previous_layers[index]
-            embeddings, keys_values = block(embeddings, previous)
-            if use_cache:
-                current.append(keys_values)
-        logits = self.byte_head(self.final_norm(embeddings)).reshape(
-            *leading, length, BYTE_VALUES
-        )
-        return logits, tuple(current)
-
     def forward(
         self,
         hidden: Tensor,
@@ -314,14 +283,17 @@ class ConditionalByteDecoder(nn.Module):
             condition = cache.condition_embedding
         if not bool((remainder < BYTE_VALUES).all()):
             raise ValueError("Byte-BOS is permitted only at inner position zero")
-        logits, current = self._decode_tokens(
-            tokens,
-            leading=leading,
-            condition=condition,
-            offset=offset,
-            previous_layers=None if cache is None else cache.layers,
-            use_cache=use_cache,
-        )
+        positions = torch.arange(offset, offset + length, device=hidden.device)
+        embeddings = self.byte_embedding(tokens.reshape(-1, length))
+        embeddings = embeddings + self.position_embedding(positions) + condition.unsqueeze(1)
+        current = []
+        for index, block in enumerate(self.blocks):
+            embeddings, keys_values = block(
+                embeddings, None if cache is None else cache.layers[index]
+            )
+            if use_cache:
+                current.append(keys_values)
+        logits = self.byte_head(self.final_norm(embeddings)).reshape(*leading, length, BYTE_VALUES)
         if not use_cache:
             return logits
         next_cache = ByteDecoderCache(
@@ -330,64 +302,9 @@ class ConditionalByteDecoder(nn.Module):
             condition_embedding=condition,
             leading_shape=leading,
             length=offset + length,
-            layers=current,
+            layers=tuple(current),
         )
         return logits, next_cache
-
-    @staticmethod
-    def _select_value(
-        scores: Tensor,
-        *,
-        leading: tuple[int, ...],
-        strategy: str,
-        temperature: float,
-        generator: torch.Generator | None,
-    ) -> Tensor:
-        if strategy == "greedy":
-            return scores.argmax(-1, keepdim=True)
-        probabilities = (scores / temperature).softmax(-1).reshape(-1, BYTE_VALUES)
-        return torch.multinomial(probabilities, 1, generator=generator).reshape(*leading, 1)
-
-    def _generate_cached(
-        self,
-        hidden: Tensor,
-        *,
-        leading: tuple[int, ...],
-        strategy: str,
-        temperature: float,
-        generator: torch.Generator | None,
-    ) -> Tensor:
-        """Generate with trusted internal cache state and one final finite-value check."""
-        condition = self.condition_projection(
-            hidden.reshape(-1, self.hidden_size).to(self.condition_projection.weight.dtype)
-        )
-        token = torch.full((*leading, 1), BYTE_BOS, dtype=torch.long, device=hidden.device)
-        generated = []
-        score_history = []
-        layers = None
-        for offset in range(GRID_BYTES):
-            logits, layers = self._decode_tokens(
-                token,
-                leading=leading,
-                condition=condition,
-                offset=offset,
-                previous_layers=layers,
-                use_cache=True,
-            )
-            scores = logits[..., -1, :].float()
-            score_history.append(scores)
-            value = self._select_value(
-                scores,
-                leading=leading,
-                strategy=strategy,
-                temperature=temperature,
-                generator=generator,
-            )
-            generated.append(value.to(torch.uint8))
-            token = value
-        if not bool(torch.isfinite(torch.stack(score_history, dim=-2)).all()):
-            raise FloatingPointError("Cannot sample a byte from nonfinite logits")
-        return _unpack_glyph_bytes(torch.cat(generated, dim=-1))
 
     @torch.no_grad()
     def generate(
@@ -416,30 +333,26 @@ class ConditionalByteDecoder(nn.Module):
         was_training = self.training
         self.eval()
         try:
-            if use_cache:
-                return self._generate_cached(
-                    hidden,
-                    leading=leading,
-                    strategy=strategy,
-                    temperature=temperature,
-                    generator=generator,
-                )
             prefix = torch.full((*leading, 1), BYTE_BOS, dtype=torch.long, device=hidden.device)
             generated = []
+            cache = None
             for _ in range(GRID_BYTES):
-                logits = self(hidden, prefix)
+                if use_cache:
+                    logits, cache = self(hidden, prefix[..., -1:], cache=cache, use_cache=True)
+                else:
+                    logits = self(hidden, prefix)
                 scores = logits[..., -1, :].float()
                 if not bool(torch.isfinite(scores).all()):
                     raise FloatingPointError("Cannot sample a byte from nonfinite logits")
-                value = self._select_value(
-                    scores,
-                    leading=leading,
-                    strategy=strategy,
-                    temperature=temperature,
-                    generator=generator,
-                )
+                if strategy == "greedy":
+                    value = scores.argmax(-1, keepdim=True)
+                else:
+                    probabilities = (scores / temperature).softmax(-1).reshape(-1, BYTE_VALUES)
+                    value = torch.multinomial(probabilities, 1, generator=generator).reshape(
+                        *leading, 1
+                    )
                 generated.append(value.to(torch.uint8))
                 prefix = torch.cat((prefix, value), dim=-1)
-            return _unpack_glyph_bytes(torch.cat(generated, dim=-1))
+            return unpack_glyph_bytes(torch.cat(generated, dim=-1))
         finally:
             self.train(was_training)

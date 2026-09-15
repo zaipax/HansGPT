@@ -254,7 +254,7 @@ def main() -> None:
     parser.add_argument("--batch-sizes", default="1,8")
     parser.add_argument("--prompt-lengths", default="8,512,1024")
     parser.add_argument("--max-new", type=int, default=32)
-    parser.add_argument("--warmup-new", type=int, default=4)
+    parser.add_argument("--warmup-new", type=int, default=16)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--profile-new", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260915)

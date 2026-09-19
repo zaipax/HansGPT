@@ -384,22 +384,23 @@ class ConditionalByteDecoder(nn.Module):
             or self._cuda_graph_cache.get("batch_size") != batch_size
         ):
             device = hidden.device
-            dtype = self.condition_projection.weight.dtype
+            is_fp16 = torch.is_autocast_enabled() or flat_hidden.dtype == torch.float16
+            dtype = torch.float16 if is_fp16 else self.condition_projection.weight.dtype
             head_dim = self.inner_dim // self.heads
             scale = 1.0 / (head_dim**0.5)
 
             static_h = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
             pos_tensor = torch.arange(GRID_BYTES, device=device)
-            pos_embs = self.position_embedding(pos_tensor).unsqueeze(0)
+            pos_embs = self.position_embedding(pos_tensor).unsqueeze(0).to(dtype)
             out_bytes = torch.empty((batch_size, GRID_BYTES), dtype=torch.uint8, device=device)
             curr_token = torch.full((batch_size, 1), BYTE_BOS, dtype=torch.long, device=device)
 
             k_caches = [
-                torch.zeros((batch_size, self.heads, GRID_BYTES, head_dim), device=device)
+                torch.zeros((batch_size, self.heads, GRID_BYTES, head_dim), device=device, dtype=dtype)
                 for _ in range(len(self.blocks))
             ]
             v_caches = [
-                torch.zeros((batch_size, self.heads, GRID_BYTES, head_dim), device=device)
+                torch.zeros((batch_size, self.heads, GRID_BYTES, head_dim), device=device, dtype=dtype)
                 for _ in range(len(self.blocks))
             ]
 
@@ -407,7 +408,7 @@ class ConditionalByteDecoder(nn.Module):
                 curr_token.fill_(BYTE_BOS)
                 cond = self.condition_projection(static_h).unsqueeze(1)
                 for pos in range(GRID_BYTES):
-                    x = self.byte_embedding(curr_token) + pos_embs[:, pos : pos + 1, :] + cond
+                    x = self.byte_embedding(curr_token).to(dtype) + pos_embs[:, pos : pos + 1, :] + cond
                     for i, block in enumerate(self.blocks):
                         residual = x
                         normed = block.attention_norm(x)
@@ -442,16 +443,14 @@ class ConditionalByteDecoder(nn.Module):
                     curr_token.copy_(logits[:, -1, :].argmax(dim=-1, keepdim=True))
                     out_bytes[:, pos] = curr_token.squeeze(-1)
 
-            stream = torch.cuda.Stream(device=device)
-            stream.wait_stream(torch.cuda.current_stream())
-            with torch.cuda.stream(stream):
+            with torch.autocast("cuda", dtype=torch.float16, enabled=is_fp16):
                 for _ in range(3):
                     inner_fn()
-            torch.cuda.current_stream().wait_stream(stream)
 
             graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph, stream=stream):
-                inner_fn()
+            with torch.cuda.graph(graph):
+                with torch.autocast("cuda", dtype=torch.float16, enabled=is_fp16):
+                    inner_fn()
 
             self._cuda_graph_cache = {
                 "batch_size": batch_size,

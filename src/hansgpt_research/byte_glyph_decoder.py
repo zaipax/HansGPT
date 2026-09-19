@@ -385,22 +385,61 @@ class ConditionalByteDecoder(nn.Module):
         ):
             device = hidden.device
             dtype = self.condition_projection.weight.dtype
+            head_dim = self.inner_dim // self.heads
+            scale = 1.0 / (head_dim**0.5)
+
             static_h = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
             pos_tensor = torch.arange(GRID_BYTES, device=device)
             pos_embs = self.position_embedding(pos_tensor).unsqueeze(0)
             out_bytes = torch.empty((batch_size, GRID_BYTES), dtype=torch.uint8, device=device)
             curr_token = torch.full((batch_size, 1), BYTE_BOS, dtype=torch.long, device=device)
 
+            k_caches = [
+                torch.zeros((batch_size, self.heads, GRID_BYTES, head_dim), device=device)
+                for _ in range(len(self.blocks))
+            ]
+            v_caches = [
+                torch.zeros((batch_size, self.heads, GRID_BYTES, head_dim), device=device)
+                for _ in range(len(self.blocks))
+            ]
+
             def inner_fn() -> None:
                 curr_token.fill_(BYTE_BOS)
                 cond = self.condition_projection(static_h).unsqueeze(1)
-                cache = [None] * len(self.blocks)
                 for pos in range(GRID_BYTES):
                     x = self.byte_embedding(curr_token) + pos_embs[:, pos : pos + 1, :] + cond
                     for i, block in enumerate(self.blocks):
-                        x, cache[i] = block(x, cache[i])
+                        residual = x
+                        normed = block.attention_norm(x)
+                        qkv = (
+                            block.qkv(normed)
+                            .reshape(batch_size, 1, 3, self.heads, head_dim)
+                            .permute(2, 0, 3, 1, 4)
+                        )
+                        q, k, v = qkv[0], qkv[1], qkv[2]
+
+                        k_caches[i][:, :, pos : pos + 1, :] = k
+                        v_caches[i][:, :, pos : pos + 1, :] = v
+
+                        cur_k = k_caches[i][:, :, : pos + 1, :]
+                        cur_v = v_caches[i][:, :, : pos + 1, :]
+
+                        attn = torch.matmul(q, cur_k.transpose(-1, -2)) * scale
+                        attn = attn.softmax(dim=-1)
+                        attn_out = (
+                            torch.matmul(attn, cur_v)
+                            .transpose(1, 2)
+                            .reshape(batch_size, 1, self.inner_dim)
+                        )
+                        x = residual + block.attention_output(attn_out)
+
+                        normed_mlp = block.mlp_norm(x)
+                        x = x + block.down(
+                            F.silu(block.gate(normed_mlp)) * block.up(normed_mlp)
+                        )
+
                     logits = self.byte_head(self.final_norm(x))
-                    curr_token.copy_(logits.argmax(dim=-1))
+                    curr_token.copy_(logits[:, -1, :].argmax(dim=-1, keepdim=True))
                     out_bytes[:, pos] = curr_token.squeeze(-1)
 
             stream = torch.cuda.Stream(device=device)

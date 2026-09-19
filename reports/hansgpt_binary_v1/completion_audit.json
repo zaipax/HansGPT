@@ -1,0 +1,62 @@
+{
+  "status": "passed",
+  "observed_at": "2026-09-08T06:55:42.119039+00:00",
+  "pipeline_exit": 0,
+  "training_mode": "full",
+  "updated_targets": 1500017043,
+  "test_targets": 1006022,
+  "validation_targets": 979428,
+  "han_targets": 897588,
+  "punctuation_targets": 99093,
+  "control_targets": 9341,
+  "model_threshold": 0.3,
+  "receipt_hashes_verified": true,
+  "training_evaluation_data_identity_verified": true,
+  "metrics_arithmetic_and_partitions_verified": true,
+  "generation": [
+    {
+      "index": 0,
+      "generated_shape": [
+        1,
+        512,
+        1,
+        32,
+        32
+      ],
+      "dtype": "uint8",
+      "strict_binary": true,
+      "all_horizons_membership_repetition_verified": true,
+      "raw_npz_sha256": "167697cd5ca16060242689e1b34c31d94966dbc26053c92895827b4ea908b4e2"
+    },
+    {
+      "index": 1,
+      "generated_shape": [
+        1,
+        512,
+        1,
+        32,
+        32
+      ],
+      "dtype": "uint8",
+      "strict_binary": true,
+      "all_horizons_membership_repetition_verified": true,
+      "raw_npz_sha256": "5f79a8a1b8f8fb56349ed54daab9d97d1f6720d2fdf6dd645d9573ac4250a62f"
+    },
+    {
+      "index": 2,
+      "generated_shape": [
+        1,
+        512,
+        1,
+        32,
+        32
+      ],
+      "dtype": "uint8",
+      "strict_binary": true,
+      "all_horizons_membership_repetition_verified": true,
+      "raw_npz_sha256": "fe8017789288a375cf75256d276e41f4b26fbd44da627ea238efd90ebe658dfe"
+    }
+  ],
+  "evaluation_summary_sha256": "8110c8db8a571b7ffac3d3c7cc28c592bef577fd183263a5e568a534881362a8",
+  "scope": "Read-only artifact and count audit; no second model inference or test-set tuning."
+}

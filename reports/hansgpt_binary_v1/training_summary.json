@@ -1,0 +1,222 @@
+{
+  "status": "training_complete_evaluation_pending_separate_receipt",
+  "run_name": "hansgpt_binary_v1",
+  "training_completion": {
+    "status": "complete",
+    "mode": "full",
+    "stop_reason": "token_budget",
+    "progress": {
+      "epoch": 15,
+      "cursor": 614912,
+      "optimizer_steps": 54977,
+      "valid_tokens": 1500017043,
+      "attempted_tokens": 1500208570,
+      "overflow_steps": 15,
+      "best_validation_bce": 0.2511718415738049,
+      "best_step": 20920,
+      "best_tokens": 570838956,
+      "best_threshold": 0.3,
+      "validations_without_improvement": 93,
+      "last_validation_tokens": 1500017043,
+      "training_seconds": 45267.963151565986
+    },
+    "metadata_sha256": "9e91856405fbc2c72553732b54c1276f3bde34dc188af090fd04a0bfca24ccbf",
+    "best_checkpoint_sha256": "f4fa353811f4b84e117cd3d632f10cb418423204b2b632443bd751bc58310b5f",
+    "final_checkpoint_sha256": "874254788412c645574d970388e86e9675cfe4d09284f7bfec57d6dac1fc5358",
+    "evaluation_complete": false
+  },
+  "audit_observed_at": "2026-09-08T06:44:02.980720+00:00",
+  "sha256_checks": {
+    "metadata": true,
+    "best_checkpoint": true,
+    "final_checkpoint": true,
+    "manifest": true,
+    "verification": true,
+    "input:glyph_bank.npz": true,
+    "input:glyph_inventory.json": true,
+    "input:test.offsets.npy": true,
+    "input:test.uint16": true,
+    "input:train.offsets.npy": true,
+    "input:train.uint16": true,
+    "input:validation.offsets.npy": true,
+    "input:validation.uint16": true
+  },
+  "training_log_sha256": "ba223d188264ba23a3bf6245869aa581613ebf6d3779030f6822a5adf648ef2d",
+  "mode": "full",
+  "git_commit": "79b1d17927f10b13e3838a9aa3e5bb4482d374d9",
+  "target_budget": 1500000000,
+  "budget_overshoot": 17043,
+  "unique_training_targets_per_pass": 95660276,
+  "effective_passes": 15.68066814902353,
+  "attempted_passes": 15.682670307160727,
+  "skipped_targets": 191527,
+  "overall_effective_targets_per_second": 33136.393567734645,
+  "median_logged_group_targets_per_second": 38612.12942807344,
+  "peak_logged_cuda_allocated_bytes": 9061114880,
+  "training_log_records": 5499,
+  "full_validation_records": 151,
+  "initial_validation_bce": 0.7290305381908234,
+  "selected_validation_bce": 0.2511718415738049,
+  "final_validation_bce": 0.3256162501227408,
+  "selected_validation_targets": 570838956,
+  "selected_validation_step": 20920,
+  "selected_validation_threshold": 0.3,
+  "all_logged_train_losses_and_gradient_norms_finite": true,
+  "all_validation_counts_match": true,
+  "overflow_events": [
+    {
+      "time": "2026-09-07T22:18:43.441493+00:00",
+      "epoch": 5,
+      "optimizer_steps": 18503,
+      "valid_tokens": 505116631,
+      "attempted_tokens": 505129092,
+      "overflow_steps": 1,
+      "scale": 16777216.0,
+      "skipped_targets_this_event": 12461
+    },
+    {
+      "time": "2026-09-07T22:53:23.018137+00:00",
+      "epoch": 5,
+      "optimizer_steps": 21034,
+      "valid_tokens": 573947003,
+      "attempted_tokens": 573961656,
+      "overflow_steps": 2,
+      "scale": 16777216.0,
+      "skipped_targets_this_event": 2192
+    },
+    {
+      "time": "2026-09-07T23:32:38.514844+00:00",
+      "epoch": 6,
+      "optimizer_steps": 23905,
+      "valid_tokens": 652237769,
+      "attempted_tokens": 652268681,
+      "overflow_steps": 3,
+      "scale": 16777216.0,
+      "skipped_targets_this_event": 16259
+    },
+    {
+      "time": "2026-09-08T00:00:58.110760+00:00",
+      "epoch": 7,
+      "optimizer_steps": 25973,
+      "valid_tokens": 708810390,
+      "attempted_tokens": 708853817,
+      "overflow_steps": 4,
+      "scale": 16777216.0,
+      "skipped_targets_this_event": 12515
+    },
+    {
+      "time": "2026-09-08T00:29:17.108854+00:00",
+      "epoch": 7,
+      "optimizer_steps": 28043,
+      "valid_tokens": 765236629,
+      "attempted_tokens": 765282208,
+      "overflow_steps": 5,
+      "scale": 16777216.0,
+      "skipped_targets_this_event": 2152
+    },
+    {
+      "time": "2026-09-08T01:04:43.022534+00:00",
+      "epoch": 8,
+      "optimizer_steps": 30656,
+      "valid_tokens": 836313818,
+      "attempted_tokens": 836384667,
+      "overflow_steps": 6,
+      "scale": 16777216.0,
+      "skipped_targets_this_event": 25270
+    },
+    {
+      "time": "2026-09-08T01:16:56.376546+00:00",
+      "epoch": 8,
+      "optimizer_steps": 31547,
+      "valid_tokens": 860869544,
+      "attempted_tokens": 860942484,
+      "overflow_steps": 7,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 2091
+    },
+    {
+      "time": "2026-09-08T02:04:59.160229+00:00",
+      "epoch": 9,
+      "optimizer_steps": 35052,
+      "valid_tokens": 956527599,
+      "attempted_tokens": 956602760,
+      "overflow_steps": 8,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 2221
+    },
+    {
+      "time": "2026-09-08T02:53:10.378333+00:00",
+      "epoch": 10,
+      "optimizer_steps": 38557,
+      "valid_tokens": 1052185701,
+      "attempted_tokens": 1052263036,
+      "overflow_steps": 9,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 2174
+    },
+    {
+      "time": "2026-09-08T03:41:01.075882+00:00",
+      "epoch": 11,
+      "optimizer_steps": 42062,
+      "valid_tokens": 1147843819,
+      "attempted_tokens": 1147923312,
+      "overflow_steps": 10,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 2158
+    },
+    {
+      "time": "2026-09-08T04:29:15.103207+00:00",
+      "epoch": 12,
+      "optimizer_steps": 45567,
+      "valid_tokens": 1243501924,
+      "attempted_tokens": 1243583588,
+      "overflow_steps": 11,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 2171
+    },
+    {
+      "time": "2026-09-08T04:57:47.590094+00:00",
+      "epoch": 13,
+      "optimizer_steps": 47676,
+      "valid_tokens": 1300717648,
+      "attempted_tokens": 1300837103,
+      "overflow_steps": 12,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 37791
+    },
+    {
+      "time": "2026-09-08T05:36:29.106351+00:00",
+      "epoch": 14,
+      "optimizer_steps": 50458,
+      "valid_tokens": 1377284766,
+      "attempted_tokens": 1377435869,
+      "overflow_steps": 13,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 31648
+    },
+    {
+      "time": "2026-09-08T06:05:17.439325+00:00",
+      "epoch": 14,
+      "optimizer_steps": 52576,
+      "valid_tokens": 1434750913,
+      "attempted_tokens": 1434904140,
+      "overflow_steps": 14,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 2124
+    },
+    {
+      "time": "2026-09-08T06:37:42.049645+00:00",
+      "epoch": 15,
+      "optimizer_steps": 54968,
+      "valid_tokens": 1499737766,
+      "attempted_tokens": 1499929293,
+      "overflow_steps": 15,
+      "scale": 8388608.0,
+      "skipped_targets_this_event": 38300
+    }
+  ],
+  "plotting": {
+    "matplotlib": "3.10.8"
+  },
+  "curve_note": "Training points are logged optimizer-group BCE, not full-training-set evaluation; validation points cover the whole validation split."
+}

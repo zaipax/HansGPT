@@ -384,8 +384,7 @@ class ConditionalByteDecoder(nn.Module):
             or self._cuda_graph_cache.get("batch_size") != batch_size
         ):
             device = hidden.device
-            is_fp16 = torch.is_autocast_enabled() or flat_hidden.dtype == torch.float16
-            dtype = torch.float16 if is_fp16 else self.condition_projection.weight.dtype
+            dtype = self.condition_projection.weight.dtype
             head_dim = self.inner_dim // self.heads
             scale = 1.0 / (head_dim**0.5)
 
@@ -408,7 +407,7 @@ class ConditionalByteDecoder(nn.Module):
                 curr_token.fill_(BYTE_BOS)
                 cond = self.condition_projection(static_h).unsqueeze(1)
                 for pos in range(GRID_BYTES):
-                    x = self.byte_embedding(curr_token).to(dtype) + pos_embs[:, pos : pos + 1, :] + cond
+                    x = self.byte_embedding(curr_token) + pos_embs[:, pos : pos + 1, :] + cond
                     for i, block in enumerate(self.blocks):
                         residual = x
                         normed = block.attention_norm(x)
@@ -443,14 +442,12 @@ class ConditionalByteDecoder(nn.Module):
                     curr_token.copy_(logits[:, -1, :].argmax(dim=-1, keepdim=True))
                     out_bytes[:, pos] = curr_token.squeeze(-1)
 
-            with torch.autocast("cuda", dtype=torch.float16, enabled=is_fp16):
-                for _ in range(3):
-                    inner_fn()
+            for _ in range(3):
+                inner_fn()
 
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph):
-                with torch.autocast("cuda", dtype=torch.float16, enabled=is_fp16):
-                    inner_fn()
+                inner_fn()
 
             self._cuda_graph_cache = {
                 "batch_size": batch_size,
@@ -460,6 +457,6 @@ class ConditionalByteDecoder(nn.Module):
             }
 
         cached = self._cuda_graph_cache
-        cached["static_h"].copy_(flat_hidden.to(cached["static_h"].dtype))
+        cached["static_h"].copy_(flat_hidden.float())
         cached["graph"].replay()
         return unpack_glyph_bytes(cached["out_bytes"].clone().reshape(*leading, GRID_BYTES))

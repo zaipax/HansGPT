@@ -2,7 +2,7 @@
 
 ## Current state
 
-The active research direction is the pure Transformer C architecture: 4×4 patch self-attention glyph encoder, 24-layer width-1024 GQA GPT backbone (16Q/4KV, FFN 2816), and a 4-layer width-256 causal byte Transformer (8 heads, FFN 768) that autoregressively emits 128 bytes and reconstructs one 32×32 binary glyph. Actual baseline size is 275,349,504 parameters. Full design and prior ABC results are in `ATTENTION_ABC_R2.md` and `reports/attention_abc_r2/REPORT.md`.
+The active research direction is the pure Transformer C architecture: 4×4 patch self-attention glyph encoder, 24-layer width-1024 GQA GPT backbone (16Q/4KV, FFN 2816), and a 4-layer width-256 causal byte Transformer (8 heads, FFN 768) that autoregressively emits 128 bytes and reconstructs one 32×32 binary glyph. Actual baseline size is 275,349,504 parameters. Full design and prior ABC results are in `docs/ATTENTION_ABC_R2.md` and `reports/attention_abc_r2/REPORT.md`.
 
 ## Active training
 

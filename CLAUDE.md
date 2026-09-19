@@ -75,7 +75,7 @@ uv run torchrun --standalone --nproc_per_node=8 \
   --smoke
 ```
 
-`scripts/train_byte_glyph.py` and old constant-LR configs are historical throughput comparisons, not the formal schedule. Protocol: [`BYTE_C_EIGHT_GPU_GLOBAL_LR.md`](BYTE_C_EIGHT_GPU_GLOBAL_LR.md). Qwen3-shaped 1.5B C scaling: [`QWEN3_DENSE_C_1P5B.md`](QWEN3_DENSE_C_1P5B.md).
+`scripts/train_byte_glyph.py` and old constant-LR configs are historical throughput comparisons, not the formal schedule. Protocol: [`docs/BYTE_C_EIGHT_GPU_GLOBAL_LR.md`](docs/BYTE_C_EIGHT_GPU_GLOBAL_LR.md). Qwen3-shaped 1.5B C scaling: [`docs/QWEN3_DENSE_C_1P5B.md`](docs/QWEN3_DENSE_C_1P5B.md).
 
 Raw glyph rollout (no gallery/OCR/font projection of generated grids):
 

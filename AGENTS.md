@@ -157,7 +157,7 @@ Recommended server paths:
 - Use resumable downloads and verify official checksums when available.
 - Download Hugging Face models with `uv run hf download ...` or project Python code using `huggingface_hub`.
 - Pin model revisions before formal experiments.
-- Download Unihan, Noto Sans CJK SC, and Chinese Wikipedia directly from the official URLs in `RESEARCH_PLAN.md`.
+- Download Unihan, Noto Sans CJK SC, and Chinese Wikipedia directly from the official URLs in `docs/RESEARCH_PLAN.md`.
 - Never commit raw data, model weights, hidden-state caches, checkpoints, `.part` files, or extracted dumps.
 - Do not silently switch to an unofficial mirror. If an official source is unavailable, report the failure before changing the source.
 

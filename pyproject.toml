@@ -2,7 +2,7 @@
 name = "hansgpt-research"
 version = "0.1.0"
 description = "Frozen-language-model probes for decoding Chinese characters as 32x32 binary glyphs"
-readme = "RESEARCH_PLAN.md"
+readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "accelerate>=1.10,<2",

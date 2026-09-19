@@ -100,8 +100,8 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError("Generation lengths must be positive and repeats must be at least two")
     if not torch.cuda.is_available() or not str(args.device).startswith("cuda"):
         raise RuntimeError("This benchmark requires CUDA")
-    if os.environ.get("CUDA_VISIBLE_DEVICES") not in (None, "0"):
-        raise RuntimeError("Set CUDA_VISIBLE_DEVICES=0 so cuda:0 is physical GPU0")
+    if os.environ.get("CUDA_VISIBLE_DEVICES") != str(args.physical_gpu):
+        raise RuntimeError(f"Set CUDA_VISIBLE_DEVICES={args.physical_gpu}")
     output = Path(args.output)
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
@@ -267,6 +267,7 @@ def main() -> None:
     parser.add_argument("--profile-new", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260915)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--physical-gpu", type=int, default=0)
     parser.add_argument(
         "--use-cuda-graph",
         action="store_true",

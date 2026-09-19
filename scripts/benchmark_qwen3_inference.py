@@ -33,6 +33,7 @@ def profile_rollout(
     max_new: int,
     precision: str,
     device: torch.device,
+    use_cuda_graph: bool = False,
 ) -> dict:
     """Split rollout wall time into outer-model and byte-decoder CUDA intervals."""
     context = prompt.to(device=device, dtype=torch.uint8)
@@ -56,7 +57,11 @@ def profile_rollout(
         with autocast_context(device, precision):
             distribution = model.distribution(hidden[:, -1:])
             tile = distribution.decode(
-                strategy="greedy", temperature=1.0, generator=generator, use_cache=True
+                strategy="greedy",
+                temperature=1.0,
+                generator=generator,
+                use_cache=True,
+                use_cuda_graph=use_cuda_graph,
             )
         decoder_finished.record()
         if tile.dtype != torch.uint8 or not bool(((tile == 0) | (tile == 1)).all()):
@@ -173,6 +178,7 @@ def run(args: argparse.Namespace) -> None:
                 generator=generator,
                 precision=precision,
                 device=device,
+                use_cuda_graph=args.use_cuda_graph,
             )
             measurements = []
             first_output = None
@@ -189,6 +195,7 @@ def run(args: argparse.Namespace) -> None:
                     generator=generator,
                     precision=precision,
                     device=device,
+                    use_cuda_graph=args.use_cuda_graph,
                 )
                 torch.cuda.synchronize(device)
                 elapsed = time.monotonic() - started
@@ -221,6 +228,7 @@ def run(args: argparse.Namespace) -> None:
                     max_new=args.profile_new,
                     precision=precision,
                     device=device,
+                    use_cuda_graph=args.use_cuda_graph,
                 ),
                 "peak_memory_allocated_bytes": int(torch.cuda.max_memory_allocated(device)),
                 "peak_memory_reserved_bytes": int(torch.cuda.max_memory_reserved(device)),
@@ -259,6 +267,11 @@ def main() -> None:
     parser.add_argument("--profile-new", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260915)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument(
+        "--use-cuda-graph",
+        action="store_true",
+        help="Use CUDA Graph for inner 128-byte greedy decoding",
+    )
     run(parser.parse_args())
 
 

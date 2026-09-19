@@ -56,8 +56,8 @@ export NCCL_CUMEM_HOST_ENABLE=0
 
 ```bash
 uv run pytest
-uv run pytest tests/test_byte_training.py
-uv run pytest tests/test_byte_training.py -k test_accelerated_loss_matches_joint_autoregressive_likelihood_and_gradients
+uv run pytest tests/byte_lm/test_byte_training.py
+uv run pytest tests/byte_lm/test_byte_training.py -k test_accelerated_loss_matches_joint_autoregressive_likelihood_and_gradients
 ```
 
 ### Current pretraining (server)

@@ -8,7 +8,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-helpers = runpy.run_path(str(Path(__file__).parents[1] / "scripts/evaluate_attention_abc.py"))
+helpers = runpy.run_path(str(Path(__file__).parents[2] / "scripts/evaluate_attention_abc.py"))
 
 
 def grid(bits):

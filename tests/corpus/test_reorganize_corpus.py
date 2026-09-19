@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 helpers = runpy.run_path(str(ROOT / "scripts/reorganize_corpus.py"))
 legacy = runpy.run_path(str(ROOT / "scripts/prepare_multidomain_corpus.py"))
 SPEC = {"adapter": "jsonl_text", "family": "education_web"}

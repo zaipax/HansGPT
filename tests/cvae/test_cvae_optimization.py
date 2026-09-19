@@ -1,6 +1,7 @@
 import copy
 import os
 import runpy
+from pathlib import Path
 
 import pytest
 import torch
@@ -9,10 +10,12 @@ import torch.nn.functional as F
 from hansgpt_research.conditional_glyph_vae import ConditionalGlyphVAE, gaussian_kl, sample_gaussian
 from hansgpt_research.cvae_training_optimization import make_head_kernel, optimized_backward
 
+CVAE_FIXTURE = str(Path(__file__).parent / "test_conditional_glyph_vae.py")
+
 
 @pytest.mark.parametrize("chunk", [2, 3])
 def test_optimized_loss_and_all_gradients_match_original_with_tail(chunk):
-    cfg = runpy.run_path("tests/test_conditional_glyph_vae.py")["tiny_config"]()
+    cfg = runpy.run_path(CVAE_FIXTURE)["tiny_config"]()
     torch.manual_seed(91)
     original = ConditionalGlyphVAE(cfg).train()
     optimized = copy.deepcopy(original)
@@ -48,7 +51,7 @@ def test_optimized_loss_and_all_gradients_match_original_with_tail(chunk):
 
 
 def test_nonfinite_statistics_abort_before_backbone_backward():
-    cfg = runpy.run_path("tests/test_conditional_glyph_vae.py")["tiny_config"]()
+    cfg = runpy.run_path(CVAE_FIXTURE)["tiny_config"]()
     model = ConditionalGlyphVAE(cfg)
     x = torch.randint(2, (2, 2, 1, 32, 32), dtype=torch.uint8)
     h = model.forward_hidden(x)[:, -1]
@@ -76,7 +79,7 @@ def test_nonfinite_statistics_abort_before_backbone_backward():
     reason="Explicit GPU compilation test; run on the experiment GPU",
 )
 def test_compiled_cuda_head_gradients_match_eager():
-    cfg = runpy.run_path("tests/test_conditional_glyph_vae.py")["tiny_config"]()
+    cfg = runpy.run_path(CVAE_FIXTURE)["tiny_config"]()
     torch.manual_seed(22)
     eager = ConditionalGlyphVAE(cfg).cuda().train()
     compiled = copy.deepcopy(eager)

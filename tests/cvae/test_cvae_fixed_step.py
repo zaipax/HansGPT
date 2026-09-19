@@ -1,6 +1,7 @@
 import copy
 import os
 import runpy
+from pathlib import Path
 
 import pytest
 import torch
@@ -9,9 +10,11 @@ from hansgpt_research.conditional_glyph_vae import ConditionalGlyphVAE
 from hansgpt_research.cvae_fixed_step import FixedBackward, install_xformers, prepare_pixels
 from hansgpt_research.cvae_training_optimization import head_sums
 
+CVAE_FIXTURE = str(Path(__file__).parent / "test_conditional_glyph_vae.py")
+
 
 def test_shared_encoder_loss_mask_and_gradients():
-    cfg = runpy.run_path("tests/test_conditional_glyph_vae.py")["tiny_config"]()
+    cfg = runpy.run_path(CVAE_FIXTURE)["tiny_config"]()
     torch.manual_seed(11)
     a = ConditionalGlyphVAE(cfg).train()
     b = copy.deepcopy(a)
@@ -97,7 +100,7 @@ def test_compiled_xformers_backward_has_cuda_rng_placeholders():
 
 @pytest.mark.skipif(os.environ.get("HANSGPT_TEST_GRAPH") != "1", reason="Explicit GPU graph test")
 def test_graph_replay_overwrites_gradients_and_accepts_new_noise():
-    cfg = runpy.run_path("tests/test_conditional_glyph_vae.py")["tiny_config"]()
+    cfg = runpy.run_path(CVAE_FIXTURE)["tiny_config"]()
     torch.manual_seed(17)
     model = ConditionalGlyphVAE(cfg).cuda().train()
     x = torch.randint(2, (2, 4, 1, 32, 32), dtype=torch.uint8)

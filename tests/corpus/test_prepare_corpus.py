@@ -258,7 +258,7 @@ def test_source_scan_evidence_counts_last_yield_and_unvisited_shards(tmp_path):
 
 def load_verifier():
     spec = importlib.util.spec_from_file_location(
-        "verify_corpus", Path(__file__).parents[1] / "scripts" / "verify_corpus.py"
+        "verify_corpus", Path(__file__).parents[2] / "scripts" / "verify_corpus.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

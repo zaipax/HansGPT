@@ -329,7 +329,7 @@ def test_capacity_sampler_has_structural_boundaries_and_never_samples_pad(device
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA integration case requires the authorized training server GPU")
     specification = importlib.util.spec_from_file_location(
-        "stress_glyph_lm_for_test", Path(__file__).parents[1] / "scripts" / "stress_glyph_lm.py"
+        "stress_glyph_lm_for_test", Path(__file__).parents[2] / "scripts" / "stress_glyph_lm.py"
     )
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)

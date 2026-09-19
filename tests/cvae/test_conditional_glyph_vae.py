@@ -96,7 +96,7 @@ def test_context_causality_cache_and_global_latent_gradients():
 
 def test_han_budget_preserves_preceding_punctuation_and_cuts_at_last_han():
     helper = runpy.run_path(
-        str(Path(__file__).resolve().parents[1] / "scripts/train_conditional_vae.py")
+        str(Path(__file__).resolve().parents[2] / "scripts/train_conditional_vae.py")
     )
     mask = torch.tensor([[1, 1, 1, 0], [1, 1, 1, 0]], dtype=torch.bool)
     han = torch.tensor([[0, 1, 0, 0], [1, 0, 1, 0]], dtype=torch.bool)

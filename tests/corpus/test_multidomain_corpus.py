@@ -11,7 +11,7 @@ from pathlib import Path
 
 from opencc import OpenCC
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).parents[2] / "scripts"))
 corpus = importlib.import_module("prepare_multidomain_corpus")
 helpers = vars(corpus)
 
@@ -176,10 +176,18 @@ def test_large_documents_are_distributed_without_splitting_identity(tmp_path):
     rows = [{"text": "汉" * n} for n in [10, 10, 100, 100, 10]]
     path = tmp_path / "large.jsonl"
     path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
-    actual = list(corpus.ordered_clean_rows(
-        CapturingExecutor(), path, {"adapter": "jsonl_text"}, 0, 0,
-        batch_rows=32, batch_characters=50, prefetch=3,
-    ))
+    actual = list(
+        corpus.ordered_clean_rows(
+            CapturingExecutor(),
+            path,
+            {"adapter": "jsonl_text"},
+            0,
+            0,
+            batch_rows=32,
+            batch_characters=50,
+            prefetch=3,
+        )
+    )
     assert actual == list(enumerate(rows))
     assert [len(batch) for batch in batches] == [2, 1, 1, 1]
 

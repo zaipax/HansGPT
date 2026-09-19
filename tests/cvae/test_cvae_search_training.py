@@ -12,9 +12,11 @@ from hansgpt_research.cvae_fixed_step import FixedBackward, prepare_pixels
 from hansgpt_research.cvae_search_training import SharedGlyphCollator, checkpoint_latest
 from hansgpt_research.cvae_training_optimization import head_sums
 
+CVAE_FIXTURE = str(Path(__file__).parent / "test_conditional_glyph_vae.py")
+
 
 def test_causal_trailing_padding_shared_gradients_match_masked_model():
-    cfg = runpy.run_path("tests/test_conditional_glyph_vae.py")["tiny_config"]()
+    cfg = runpy.run_path(CVAE_FIXTURE)["tiny_config"]()
     torch.manual_seed(61)
     a = ConditionalGlyphVAE(cfg).train()
     b = copy.deepcopy(a)

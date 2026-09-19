@@ -143,13 +143,8 @@ class ByteGlyphDistribution:
         use_cuda_graph: bool = False,
     ) -> Tensor:
         """Return [...,1,32,32] uint8 binary grids; no pixel threshold parameter exists."""
-        if (
-            use_cuda_graph
-            and strategy == "greedy"
-            and self.hidden.is_cuda
-            and hasattr(self.decoder, "generate_graphed")
-        ):
-            return self.decoder.generate_graphed(self.hidden)
+        if use_cuda_graph and strategy == "greedy" and hasattr(self.decoder, "generate_fast"):
+            return self.decoder.generate_fast(self.hidden)
         return self.decoder.generate(
             self.hidden,
             strategy=strategy,
@@ -366,97 +361,29 @@ class ConditionalByteDecoder(nn.Module):
             self.train(was_training)
 
     @torch.no_grad()
-    def generate_graphed(self, hidden: Tensor) -> Tensor:
-        """CUDA Graph accelerated greedy generation for the 128-byte inner loop.
+    def generate_fast(self, hidden: Tensor) -> Tensor:
+        """Optimized static-loop greedy generation for the 128-byte inner loop.
 
-        Eliminates 128 individual Python launches and dynamic tensor allocations per glyph.
+        Eliminates per-step condition validation, dynamic cache allocation and tensor concatenations.
         """
         leading = self._validate_hidden(hidden)
-        if not hidden.is_cuda:
-            return self.generate(hidden, strategy="greedy")
+        dtype = self.condition_projection.weight.dtype
+        cond = self.condition_projection(hidden.reshape(-1, self.hidden_size).to(dtype)).unsqueeze(1)
+        batch_size = cond.shape[0]
+        out_bytes = torch.empty((batch_size, GRID_BYTES), dtype=torch.uint8, device=hidden.device)
+        curr_token = torch.full((batch_size, 1), BYTE_BOS, dtype=torch.long, device=hidden.device)
+        cache = [None] * len(self.blocks)
+        pos_tensor = torch.arange(GRID_BYTES, device=hidden.device)
+        pos_embs = self.position_embedding(pos_tensor).unsqueeze(0)
 
-        batch_size = math.prod(leading)
-        flat_hidden = hidden.reshape(batch_size, self.hidden_size)
+        for pos in range(GRID_BYTES):
+            x = self.byte_embedding(curr_token) + pos_embs[:, pos : pos + 1, :] + cond
+            for i, block in enumerate(self.blocks):
+                x, cache[i] = block(x, cache[i])
+            logits = self.byte_head(self.final_norm(x))
+            curr_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            out_bytes[:, pos] = curr_token.squeeze(-1)
 
-        if (
-            not hasattr(self, "_cuda_graph_cache")
-            or self._cuda_graph_cache is None
-            or self._cuda_graph_cache.get("batch_size") != batch_size
-        ):
-            device = hidden.device
-            dtype = self.condition_projection.weight.dtype
-            head_dim = self.inner_dim // self.heads
-            scale = 1.0 / (head_dim**0.5)
+        return unpack_glyph_bytes(out_bytes.reshape(*leading, GRID_BYTES))
 
-            static_h = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
-            pos_tensor = torch.arange(GRID_BYTES, device=device)
-            pos_embs = self.position_embedding(pos_tensor).unsqueeze(0).to(dtype)
-            out_bytes = torch.empty((batch_size, GRID_BYTES), dtype=torch.uint8, device=device)
-            curr_token = torch.full((batch_size, 1), BYTE_BOS, dtype=torch.long, device=device)
-
-            k_caches = [
-                torch.zeros((batch_size, self.heads, GRID_BYTES, head_dim), device=device, dtype=dtype)
-                for _ in range(len(self.blocks))
-            ]
-            v_caches = [
-                torch.zeros((batch_size, self.heads, GRID_BYTES, head_dim), device=device, dtype=dtype)
-                for _ in range(len(self.blocks))
-            ]
-
-            def inner_fn() -> None:
-                curr_token.fill_(BYTE_BOS)
-                cond = self.condition_projection(static_h).unsqueeze(1)
-                for pos in range(GRID_BYTES):
-                    x = self.byte_embedding(curr_token) + pos_embs[:, pos : pos + 1, :] + cond
-                    for i, block in enumerate(self.blocks):
-                        residual = x
-                        normed = block.attention_norm(x)
-                        qkv = (
-                            block.qkv(normed)
-                            .reshape(batch_size, 1, 3, self.heads, head_dim)
-                            .permute(2, 0, 3, 1, 4)
-                        )
-                        q, k, v = qkv[0], qkv[1], qkv[2]
-
-                        k_caches[i][:, :, pos : pos + 1, :] = k
-                        v_caches[i][:, :, pos : pos + 1, :] = v
-
-                        cur_k = k_caches[i][:, :, : pos + 1, :]
-                        cur_v = v_caches[i][:, :, : pos + 1, :]
-
-                        attn = torch.matmul(q, cur_k.transpose(-1, -2)) * scale
-                        attn = attn.softmax(dim=-1)
-                        attn_out = (
-                            torch.matmul(attn, cur_v)
-                            .transpose(1, 2)
-                            .reshape(batch_size, 1, self.inner_dim)
-                        )
-                        x = residual + block.attention_output(attn_out)
-
-                        normed_mlp = block.mlp_norm(x)
-                        x = x + block.down(
-                            F.silu(block.gate(normed_mlp)) * block.up(normed_mlp)
-                        )
-
-                    logits = self.byte_head(self.final_norm(x))
-                    curr_token.copy_(logits[:, -1, :].argmax(dim=-1, keepdim=True))
-                    out_bytes[:, pos] = curr_token.squeeze(-1)
-
-            for _ in range(3):
-                inner_fn()
-
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph):
-                inner_fn()
-
-            self._cuda_graph_cache = {
-                "batch_size": batch_size,
-                "static_h": static_h,
-                "out_bytes": out_bytes,
-                "graph": graph,
-            }
-
-        cached = self._cuda_graph_cache
-        cached["static_h"].copy_(flat_hidden.float())
-        cached["graph"].replay()
-        return unpack_glyph_bytes(cached["out_bytes"].clone().reshape(*leading, GRID_BYTES))
+    generate_graphed = generate_fast

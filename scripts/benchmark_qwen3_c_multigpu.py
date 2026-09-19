@@ -51,6 +51,17 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--gradient-bucket-mib", type=int, default=None)
+    parser.add_argument(
+        "--double-buffer-sync",
+        action="store_true",
+        help="Pipelined double-buffered AllReduce",
+    )
+    parser.add_argument(
+        "--selective-checkpointing",
+        type=int,
+        default=0,
+        help="Checkpoint every N layers (e.g. 2 for alternate)",
+    )
     parser.add_argument("--physical-gpus", default="0,1,2,3")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -114,7 +125,11 @@ def main() -> None:
         local_targets = int(cpu["mask"].sum())
 
         model = model_from_config(config).to(device).train()
-        if cfg["gradient_checkpointing"]:
+        if args.selective_checkpointing > 0:
+            model.gradient_checkpointing_enable()
+            for i, layer in enumerate(model.backbone.layers):
+                layer.gradient_checkpointing = (i % args.selective_checkpointing == 0)
+        elif cfg["gradient_checkpointing"]:
             model.gradient_checkpointing_enable()
         parameters = list(model.parameters())
         dist.init_process_group("nccl", device_id=device, timeout=timedelta(minutes=30))
@@ -132,7 +147,9 @@ def main() -> None:
             key: cpu[key].to(device, non_blocking=True)
             for key in ("tiles", "indices", "byte_targets", "mask")
         }
-        reduce_buffer = allocate_gradient_reduce_buffer(device, bucket_mib)
+        reduce_buffer = allocate_gradient_reduce_buffer(
+            device, bucket_mib, double_buffered=args.double_buffer_sync
+        )
 
         def update() -> dict:
             optimizer.zero_grad(set_to_none=True)
@@ -207,6 +224,8 @@ def main() -> None:
                 benchmark_config_sha256=sha256(args.config),
                 physical_gpus=visible,
                 rank_sample_indices=full_indices[:required].tolist(),
+                double_buffer_sync=args.double_buffer_sync,
+                selective_checkpointing=args.selective_checkpointing,
             )
             report = {
                 "status": "complete",

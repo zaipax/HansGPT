@@ -260,6 +260,7 @@ def rollout(
     generator: torch.Generator,
     precision: str,
     device: torch.device,
+    use_cuda_graph: bool = False,
 ) -> torch.Tensor:
     """Generate fixed-length raw grids while retaining EOS for analysis."""
     context = prompt.to(device=device, dtype=torch.uint8)
@@ -277,6 +278,7 @@ def rollout(
                 temperature=temperature,
                 generator=generator,
                 use_cache=True,
+                use_cuda_graph=use_cuda_graph,
             )
         if tile.dtype != torch.uint8 or not bool(((tile == 0) | (tile == 1)).all()):
             raise ValueError("Raw rollout must return strict binary uint8 grids")
@@ -401,6 +403,7 @@ def run(args: argparse.Namespace) -> None:
                 generator=generator,
                 precision=precision,
                 device=device,
+                use_cuda_graph=getattr(args, "use_cuda_graph", False),
             )
             torch.cuda.synchronize(device)
             elapsed = time.monotonic() - condition_started
@@ -473,6 +476,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260915)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--physical-gpu", type=int, default=0)
+    parser.add_argument(
+        "--use-cuda-graph",
+        action="store_true",
+        help="Use CUDA Graph for accelerated inner 128-byte greedy decoding",
+    )
     args = parser.parse_args()
     run(args)
 

@@ -90,10 +90,10 @@ class AttentionGlyphGPT(StructuredGlyphGPT):
             return self.byte_decoder.distribution(hidden)
         return super().distribution(hidden)
 
-    def decode_grid(self, hidden, threshold=0.5):
+    def decode_grid(self, hidden, threshold=0.5, *, use_cuda_graph=False):
         distribution = self.distribution(hidden)
         if self.byte_decoder is not None:
-            return distribution.decode(strategy="greedy")
+            return distribution.decode(strategy="greedy", use_cuda_graph=use_cuda_graph)
         return distribution.decode(threshold=threshold, strategy="mode_threshold")
 
     @torch.no_grad()

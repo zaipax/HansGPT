@@ -65,3 +65,13 @@
 - **多卡分布式调度**：4 卡 / 8 卡训练基准、权重同步与断点管理（`BYTE_C_FOUR_GPU.md`, `BYTE_C_FULL_CORPUS.md`）
 - **全局余弦学习率调度**：基于 10.89 亿全语料有效预测位置的全局调度协议（`BYTE_C_EIGHT_GPU_GLOBAL_LR.md`）
 - **密集模型规模化**：15 亿参数 Qwen3 结构（30 层、Q/K-Norm、xFormers）扩展方案（`QWEN3_DENSE_C_1P5B.md`）
+
+---
+
+### [8. 四卡加速消融与性能报告 (`08_multigpu_acceleration_report.md`)](08_multigpu_acceleration_report.md)
+**最新硬件加速调优**：Tesla V100S 物理 4 卡 (GPU 4-7) 1.5B 纯 Transformer C 模型的端到端实测报告：
+- **基准测试 (Step 0)**：4,142 targets/s 全局吞吐、2.45s 串行通信瓶颈归因；
+- **通信与分桶优化**：1024 MiB 梯度分桶与双缓冲流水线实测；
+- **算子与头损失编译**：Triton 与 Inductor + cuBLAS 在 Volta 架构的量化对比；
+- **选择性梯度检查点**：15 层交替检查点实现纯计算耗时减少 7.0%；
+- **高速静态推理解码**：单字解码端到端提速 11.9%，单算子吞吐提升 7.57 倍。

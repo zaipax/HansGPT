@@ -1,0 +1,64 @@
+{
+  "experiment": "hansgpt_binary_v2_bce",
+  "data_requirements": {
+    "full_source_provider": "ModelScope",
+    "full_source_shards": 6
+  },
+  "model": {
+    "hidden_size": 768,
+    "num_hidden_layers": 12,
+    "num_attention_heads": 12,
+    "num_key_value_heads": 4,
+    "intermediate_size": 2048,
+    "max_position_embeddings": 2048,
+    "glyph_deduplication_strategy": "packed",
+    "rms_norm_eps": 0.000001,
+    "rope_theta": 10000,
+    "attention_dropout": 0,
+    "initializer_range": 0.02,
+    "deduplicate_glyphs": true,
+    "glyph_encode_chunk_size": 256
+  },
+  "head": {
+    "components": 1,
+    "init_noise": 0.001
+  },
+  "training": {
+    "seed": 20260908,
+    "sequence_length": 256,
+    "batch_size": 32,
+    "gradient_accumulation_steps": 4,
+    "learning_rate": 0.0001,
+    "minimum_learning_rate_ratio": 0.1,
+    "weight_decay": 0.1,
+    "warmup_tokens": 100000,
+    "target_tokens": 5000000,
+    "max_epochs": 10,
+    "max_grad_norm": 1,
+    "precision": "fp16",
+    "gradient_checkpointing": true,
+    "num_workers": 2,
+    "sampler": "sortish",
+    "sortish_pool_batches": 64,
+    "log_every_steps": 10,
+    "validate_every_tokens": 1000000,
+    "checkpoint_every_steps": 100,
+    "max_consecutive_overflows": 20,
+    "freeze_backbone": true,
+    "head_chunk_size": 256,
+    "validation_samples": 2048,
+    "validation_batch_size": 32,
+    "adversarial_weight": 0,
+    "discriminator_lr": 0.00003,
+    "threshold": 0.45
+  },
+  "evaluation": {
+    "seed": 20260908,
+    "threshold_candidates": [
+      0.3,
+      0.45,
+      0.5
+    ],
+    "strategy": "mode_threshold"
+  }
+}

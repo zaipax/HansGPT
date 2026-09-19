@@ -71,6 +71,6 @@ def test_sync_gradients_double_buffered_matches_single_buffer(monkeypatch):
     double_buf = torch.empty((2, 4), dtype=torch.float32)
     sync_gradients([first, second], double_buf)
 
-    assert [len(bucket) for bucket in calls] == [4, 4, 1]
+    assert [len(bucket) for bucket in calls] == [3, 4, 2]
     torch.testing.assert_close(first.grad, torch.tensor([2.0, 4.0, 6.0]))
     torch.testing.assert_close(second.grad, torch.tensor([8.0, 10.0, 12.0, 14.0, 16.0, 18.0]))

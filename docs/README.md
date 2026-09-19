@@ -1,108 +1,67 @@
-# HansGPT 研究与实验文档索引
+# HansGPT 研究与技术文档总览
 
-本文档按技术发展与实验演进，系统索引 `docs/` 目录下的所有研究报告、技术提案、实验记录与诊断文档。
+本目录汇总了 HansGPT 项目从冻结大模型字形探测，到原生二值字形模型、双解码器/CVAE 架构探索，再到当前**纯 Transformer C 字节预训练主线与 15 亿参数扩展**的完整研究历程与技术报告。
 
----
-
-## 目录
-
-1. [基础理论与字形探针](#1-基础理论与字形探针)
-2. [语料预处理与文档流打包](#2-语料预处理与文档流打包)
-3. [端到端二值模型演进 (v1 / v2)](#3-端到端二值模型演进-v1--v2)
-4. [架构探索：A/B/C 对比、双解码器与 CVAE](#4-架构探索abc-对比双解码器与-cvae)
-5. [底层加速与硬件调优 (V100 / xFormers)](#5-底层加速与硬件调优-v100--xformers)
-6. [纯 Transformer C 预训练主线与参数规模化](#6-纯-transformer-c-预训练主线与参数规模化)
+为便于查阅与长期维护，原有 40 余篇分散的实验记录与方案已系统性归纳合并为 **7 篇专题技术文档**：
 
 ---
 
-## 1. 基础理论与字形探针
+## 文档导航
 
-研究冻结语言模型（Qwen3.5-2B/4B, Qwen3-4B）中间隐藏状态是否保留可线性解码的 32×32 汉字点阵结构。
-
-| 文档 | 描述 |
-| --- | --- |
-| [`RESEARCH_PLAN.md`](RESEARCH_PLAN.md) | 汉字点阵与大语言模型表征研究总体规划与理论假设 |
-| [`EXPERIMENT_REPORT_QWEN35_2B.md`](EXPERIMENT_REPORT_QWEN35_2B.md) | 首轮 Qwen3.5-2B 冻结探针训练与留出字符线性解码评测报告 |
-| [`GLYPH_BOTTLENECK_DIAGNOSTIC_REPORT.md`](GLYPH_BOTTLENECK_DIAGNOSTIC_REPORT.md) | 探针泛化瓶颈与中间表征退化归因分析报告 |
+### [1. 汉字字形探针研究 (`01_glyph_probe_research.md`)](01_glyph_probe_research.md)
+探针研究理论基础、实验协议与表征瓶颈分析：
+- **总体规划**：汉字点阵与大语言模型中间状态线性可分性理论假设（`RESEARCH_PLAN.md`）
+- **实验报告**：Qwen3.5-2B 冻结大模型中间隐藏状态字形解码实验（`EXPERIMENT_REPORT_QWEN35_2B.md`）
+- **瓶颈诊断**：线性探针泛化瓶颈、词表覆盖与隐藏层表征退化归因报告（`GLYPH_BOTTLENECK_DIAGNOSTIC_REPORT.md`）
 
 ---
 
-## 2. 语料预处理与文档流打包
-
-构建严格过滤的高质量纯中文矢量点阵数据集及长文档因果打包流水线。
-
-| 文档 | 描述 |
-| --- | --- |
-| [`CHINESE_CORPUS_PILOT.md`](CHINESE_CORPUS_PILOT.md) | 中文维基下载、繁简转换、严格白名单过滤与 32×32 点阵渲染初探 |
-| [`CHINESE_MULTIDOMAIN_CORPUS.md`](CHINESE_MULTIDOMAIN_CORPUS.md) | 多领域（文学、文言、网络精选）纯中文语料清洗与 Parquet 导出 |
-| [`CONTIGUOUS_CORPUS.md`](CONTIGUOUS_CORPUS.md) | 连续中文段落上下文保持与多进程去重规范化 |
-| [`DOCUMENT_PACKING.md`](DOCUMENT_PACKING.md) | EOS 分隔的长文档流因果打包（GPT-style Packing）与损失掩码规则 |
+### [2. 中文语料与数据处理管线 (`02_corpus_and_data_pipeline.md`)](02_corpus_and_data_pipeline.md)
+从原始非结构化文本到点阵训练张量的数据工程体系：
+- **维基语料下载与清洗**：严格繁简转换、标点与汉字白名单过滤，32×32 Noto Sans 确定性渲染（`CHINESE_CORPUS_PILOT.md`）
+- **多领域语料构建**：文学叙事、文言历史与网络高质量文本（`CHINESE_MULTIDOMAIN_CORPUS.md`）
+- **连续性重构**：打破短段落碎片化，多进程上下文保持与重复过滤（`CONTIGUOUS_CORPUS.md`）
+- **长文档因果打包**：GPT 风格的 EOS 因果流窗口打包与目标有效损失掩码规范（`DOCUMENT_PACKING.md`）
 
 ---
 
-## 3. 端到端二值模型演进 (v1 / v2)
-
-摆脱 Unicode / BPE，以 32×32 二值像素图直接作为输入与预测目标的早期探索。
-
-| 文档 | 描述 |
-| --- | --- |
-| [`HANSGPT_MODEL_AND_DATA_DESIGN.md`](HANSGPT_MODEL_AND_DATA_DESIGN.md) | 原生二值字形 GPT 总体设计方案与像素预测目标提案 |
-| [`BINARY_GPT_EXPERIMENT.md`](BINARY_GPT_EXPERIMENT.md) | 首轮二值模型训练协议、断点恢复与留出集评估 |
-| [`BINARY_GLYPH_GENERATION_RESEARCH.md`](BINARY_GLYPH_GENERATION_RESEARCH.md) | 二值字形生成问题诊断、像素稀疏性与背景占空比研究 |
-| [`BINARY_GPT_V2_EXPERIMENT.md`](BINARY_GPT_V2_EXPERIMENT.md) | 混合伯努利头、条件 GAN 判别器微调与原图反馈评测协议 |
+### [3. 原生二值字形生成模型 v1 与 v2 (`03_binary_glyph_lm.md`)](03_binary_glyph_lm.md)
+完全摆脱 Unicode / BPE，以 32×32 二值点阵作为原生自回归预测目标的初代探索：
+- **系统架构提案**：CNN 视觉编码器 + Causal Transformer + 像素级 BCE 头（`HANSGPT_MODEL_AND_DATA_DESIGN.md`）
+- **v1 全量实验**：15 亿目标训练、学习曲线与完整留出集评估报告（`BINARY_GPT_EXPERIMENT.md`）
+- **生成退化诊断**：背景像素占空比失衡、局部笔画断裂与生成质量诊断（`BINARY_GLYPH_GENERATION_RESEARCH.md`）
+- **v2 进阶方案**：整图伯努利混合分布、条件对抗微调 (GAN) 协议（`BINARY_GPT_V2_EXPERIMENT.md`）
 
 ---
 
-## 4. 架构探索：A/B/C 对比、双解码器与 CVAE
-
-对比 Patch 注意力与 CNN 编码器，探索全图一次性生成、条件变分自编码器等架构。
-
-| 文档 | 描述 |
-| --- | --- |
-| [`ATTENTION_ABC_EXPERIMENT.md`](ATTENTION_ABC_EXPERIMENT.md) | A（Patch+像素）、B（CNN+字节）、C（Patch+字节）三分支首轮对比 |
-| [`ATTENTION_ABC_R2.md`](ATTENTION_ABC_R2.md) | A/B/C 第二轮训练协议与纯 Transformer 方案确立 |
-| [`DUAL_DECODER_EXPERIMENT.md`](DUAL_DECODER_EXPERIMENT.md) | 语义与空间双 Transformer 解码器联合一次预测整图方案 |
-| [`DUAL_DECODER_DIAGNOSIS.md`](DUAL_DECODER_DIAGNOSIS.md) | 双解码器输出不完整与语义退化归因 |
-| [`DUAL_ABLATION_PILOT.md`](DUAL_ABLATION_PILOT.md) | 双解码器参数消融与采样有效性实验 |
-| [`DUAL_INTERFACE_DIAGNOSIS.md`](DUAL_INTERFACE_DIAGNOSIS.md) | 编码器与解码器接口漂移诊断 |
-| [`GLYPH_CODEC_REPAIR.md`](GLYPH_CODEC_REPAIR.md) | 空间查询编码器修复与不可变编解码器接口规范 |
-| [`CONDITIONAL_VAE_EXPERIMENT.md`](CONDITIONAL_VAE_EXPERIMENT.md) | 共享连续字形潜在空间的条件 VAE 方案 |
-| [`CVAE_24L_EXPERIMENT.md`](CVAE_24L_EXPERIMENT.md) | 24 层 CVAE 主干训练与多级字形可读性评测 |
-| [`CVAE_GPU7_SMOKE.md`](CVAE_GPU7_SMOKE.md) | 完整 CVAE 显存压力与吞吐试跑 |
-| [`GPU7_UTILIZATION_DIAGNOSIS.md`](GPU7_UTILIZATION_DIAGNOSIS.md) | 单卡利用率低与梯度反传瓶颈分析 |
-| [`CVAE_BATCH_COMPARISON.md`](CVAE_BATCH_COMPARISON.md) | 匹配样本顺序的 batch 规模对比分析 |
-| [`CVAE_GPU5_OPTIMIZATION.md`](CVAE_GPU5_OPTIMIZATION.md) | CVAE 头部优化与局部图编译加速验证 |
-| [`CVAE_10M_GPU7_EVALUATION.md`](CVAE_10M_GPU7_EVALUATION.md) | 1000 万字符级 CVAE 留出集重构与先验生成差距评估 |
-| [`CVAE_LR_SEARCH.md`](CVAE_LR_SEARCH.md) | 8 卡独立并发学习率网格搜索报告 |
-| [`CVAE_FOUR_GPU_THROUGHPUT.md`](CVAE_FOUR_GPU_THROUGHPUT.md) | 4 卡同步 CVAE 吞吐与扩展边界测试 |
-| [`CVAE_FOUR_GPU_100M.md`](CVAE_FOUR_GPU_100M.md) | 4 卡 1 亿位置 CVAE 训练与后验/先验不一致性结论 |
+### [4. 模型架构探索：A/B/C 对比与双解码器 (`04_architecture_exploration.md`)](04_architecture_exploration.md)
+视觉编码与解码架构的横向系统对比：
+- **A/B/C 架构对比**：Patch 注意力 vs CNN 编码器、像素头 vs 自回归字节解码器对比（`ATTENTION_ABC_EXPERIMENT.md`, `ATTENTION_ABC_R2.md`）
+- **双解码器方案**：语义 Transformer 与空间 Transformer 解码器联合预测（`DUAL_DECODER_EXPERIMENT.md`, `DUAL_DECODER_DIAGNOSIS.md`）
+- **消融与接口修复**：采样有效性、因果接口漂移诊断与不可变编解码器定义（`DUAL_ABLATION_PILOT.md`, `DUAL_INTERFACE_DIAGNOSIS.md`, `GLYPH_CODEC_REPAIR.md`）
 
 ---
 
-## 5. 底层加速与硬件调优 (V100 / xFormers)
-
-针对服务器硬件（Tesla V100S PCIe）与特定模型结构的计算调优与显存极限探测。
-
-| 文档 | 描述 |
-| --- | --- |
-| [`V100_TRICKS_RESULTS.md`](V100_TRICKS_RESULTS.md) | Apex 融合优化器、CUDA 图及显存池对比记录 |
-| [`XFORMERS_BATCH_SCALING.md`](XFORMERS_BATCH_SCALING.md) | xFormers 显存扩展边界与显存不足 (OOM) 临界点探测 |
-| [`XFORMERS_HEAD_SCALING.md`](XFORMERS_HEAD_SCALING.md) | Head chunk 大小对训练吞吐与显存利用率的消融测试 |
-| [`XFORMERS_H2048_BATCH_TUNING.md`](XFORMERS_H2048_BATCH_TUNING.md) | 固定 head chunk 2048 时的极限 batch 标定记录 |
+### [5. 条件字形变分自编码器体系 (`05_conditional_glyph_vae.md`)](05_conditional_glyph_vae.md)
+基于连续潜在空间的整图一次性生成与重构探索：
+- **CVAE 设计与 24 层主干**：共享潜在空间条件变分自编码器架构与字形可读性（`CONDITIONAL_VAE_EXPERIMENT.md`, `CVAE_24L_EXPERIMENT.md`）
+- **显存与硬件调优**：GPU 显存压力 Smoke、利用率瓶颈诊断与图编译优化（`CVAE_GPU7_SMOKE.md`, `GPU7_UTILIZATION_DIAGNOSIS.md`, `CVAE_GPU5_OPTIMIZATION.md`）
+- **大规模搜索与评测**：8 卡并发学习率搜索、4 卡 1 亿位置训练与后验重构 vs 先验生成差距分析（`CVAE_LR_SEARCH.md`, `CVAE_FOUR_GPU_THROUGHPUT.md`, `CVAE_FOUR_GPU_100M.md`）
 
 ---
 
-## 6. 纯 Transformer C 预训练主线与参数规模化
+### [6. 底层加速与硬件调优 (`06_hardware_and_kernel_tuning.md`)](06_hardware_and_kernel_tuning.md)
+针对 Tesla V100S PCIe 服务器与算子实现的深度极限压榨：
+- **V100 优化全景**：NVIDIA Apex 融合 Adam、CUDA 图与显存池优化对比（`V100_TRICKS_RESULTS.md`）
+- **xFormers 算子与 Batch 扩展**：CUTLASS 注意力显存扩展边界与 OOM 临界标定（`XFORMERS_BATCH_SCALING.md`）
+- **Head Chunk 分块消融**：分块尺寸对吞吐与反传显存的精准权衡（`XFORMERS_HEAD_SCALING.md`, `XFORMERS_H2048_BATCH_TUNING.md`）
 
-当前项目的核心主线：基于 Patch 注意力编码器、Llama/Qwen3 语言主干与 128 步字节解码器的自回归预训练。
+---
 
-| 文档 | 描述 |
-| --- | --- |
-| [`BYTE_C_CTX1024.md`](BYTE_C_CTX1024.md) | Context-1024 默认加速（xFormers+编译头+融合AdamW）单卡基准 |
-| [`BYTE_BLANK_DIAGNOSIS.md`](BYTE_BLANK_DIAGNOSIS.md) | 字节模型空白输出原因排查与历史差分诊断 |
-| [`BYTE_COMMA_DIAGNOSIS.md`](BYTE_COMMA_DIAGNOSIS.md) | 逗号循环死锁问题归因：优化步数饥饿与条件弱化证实 |
-| [`BYTE_C_B4_MEMORY.md`](BYTE_C_B4_MEMORY.md) | Batch-4 稳定预训练显存曲线与吞吐确认 |
-| [`BYTE_C_FOUR_GPU.md`](BYTE_C_FOUR_GPU.md) | 4 卡 1000 万/1 亿位置字节模型训练与吞吐基准 |
-| [`BYTE_C_EIGHT_GPU_GLOBAL_LR.md`](BYTE_C_EIGHT_GPU_GLOBAL_LR.md) | **全局有效位置数调度协议**（10.89 亿位置总周期，解耦试跑停止预算） |
-| [`BYTE_C_FULL_CORPUS.md`](BYTE_C_FULL_CORPUS.md) | 4 卡全语料 10.8 亿位置训练记录与断点保留策略 |
-| [`QWEN3_DENSE_C_1P5B.md`](QWEN3_DENSE_C_1P5B.md) | **15 亿参数密集 C 模型扩展方案**（30层、Q/K-Norm、xFormers与多卡基准） |
+### [7. Transformer C 字节预训练与 1.5B 扩展 (`07_byte_glyph_pretraining.md`)](07_byte_glyph_pretraining.md)
+**当前主线**：基于纯 Transformer C 结构与 128 步字节解码器的端到端预训练体系：
+- **单卡吞吐基准**：Context-1024 默认三件套（xFormers + 编译头 + 融合 AdamW）实现（`BYTE_C_CTX1024.md`, `BYTE_C_B4_MEMORY.md`）
+- **关键问题排查**：空白输出成因排查与“逗号死锁循环”的优化步数饥饿归因（`BYTE_BLANK_DIAGNOSIS.md`, `BYTE_COMMA_DIAGNOSIS.md`）
+- **多卡分布式调度**：4 卡 / 8 卡训练基准、权重同步与断点管理（`BYTE_C_FOUR_GPU.md`, `BYTE_C_FULL_CORPUS.md`）
+- **全局余弦学习率调度**：基于 10.89 亿全语料有效预测位置的全局调度协议（`BYTE_C_EIGHT_GPU_GLOBAL_LR.md`）
+- **密集模型规模化**：15 亿参数 Qwen3 结构（30 层、Q/K-Norm、xFormers）扩展方案（`QWEN3_DENSE_C_1P5B.md`）

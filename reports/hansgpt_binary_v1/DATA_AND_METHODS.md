@@ -1,6 +1,6 @@
 # HansGPT binary v1：数据、方法与复现附录
 
-本附录依据实际运行导出的 [reproducibility.json](reproducibility.json)、[实验协议](../../BINARY_GPT_EXPERIMENT.md)、[语料处理说明](../../CHINESE_CORPUS_PILOT.md) 与 [模型实现](../../src/hansgpt_research/glyph_lm.py)，说明模型、数据身份、固定训练配置及启动前检查。训练实际终止预算、最终测试指标和自由生成效果由主报告另行记录。
+本附录依据实际运行导出的 [reproducibility.json](reproducibility.json)、[实验协议](../../docs/03_binary_glyph_lm.md)、[语料处理说明](../../docs/02_corpus_and_data_pipeline.md) 与 [模型实现](../../src/hansgpt_research/glyph_lm.py)，说明模型、数据身份、固定训练配置及启动前检查。训练实际终止预算、最终测试指标和自由生成效果由主报告另行记录。
 
 ## 模型与监督目标
 

@@ -1,0 +1,21 @@
+{
+  "name": "glyph_codec_spatial16_v1",
+  "initial_checkpoint": "artifacts/checkpoints/hansgpt_dual_r1/best.pt",
+  "initial_sha256": "67f91aee5aecf54237cdbfb9159f8fa2dc30b22bfd0b3c916f58781791edadb2",
+  "data": "data/processed/modelscope_zhwiki_full_v1",
+  "gpus": {"fixed": 5, "spatial": 7},
+  "latent_slots": 16,
+  "seed": 20260914,
+  "batch_size": 256,
+  "small_glyphs": 256,
+  "small_steps": 4000,
+  "full_steps": 16000,
+  "learning_rate": 0.0003,
+  "minimum_learning_rate_ratio": 0.1,
+  "validation_fraction": 0.1,
+  "small_exact_gate": 0.99,
+  "full_train_exact_gate": 0.95,
+  "heldout_exact_gate": 0.5,
+  "heldout_hamming_gate": 4.0,
+  "full_patience_evaluations": 5
+}

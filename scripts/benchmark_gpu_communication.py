@@ -280,6 +280,8 @@ def suite(args):
     ).strip()
     if active:
         raise RuntimeError("GPU processes exist; inspect before using this idle-GPU suite")
+    case_logs = Path("artifacts/logs") / args.output.name
+    case_logs.mkdir(parents=True, exist_ok=False)
     args.output.mkdir(parents=True)
     cases = []
 
@@ -401,7 +403,7 @@ def suite(args):
         ]
         print(f"START {label}", flush=True)
         before = time.perf_counter()
-        with (args.output / f"{label}.log").open("x") as stream:
+        with (case_logs / f"{label}.log").open("x") as stream:
             completed = subprocess.run(command, env=env, stdout=stream, stderr=subprocess.STDOUT)
         result = dict(
             case=label,

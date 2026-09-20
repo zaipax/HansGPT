@@ -253,7 +253,7 @@ def suite(args):
         for gpus in ("0,1,2,3", "4,5,6,7", "0,1,4,5", "0,1,2,3,4,5,6,7"):
             add(gpus, "group_" + gpus.replace(",", "_"))
     elif args.suite == "extended":
-        for gpus in ("0,1", "0,2", "0,4", "0,1,2,3", "4,5,6,7", "0,1,2,3,4,5,6,7"):
+        for gpus in ("0,1", "0,2", "0,4", "0,1,2,3", "4,5,6,7", "0,2,4,6", "0,1,2,3,4,5,6,7"):
             add(gpus, "gradient_" + gpus.replace(",", "_"), extra=("--gradient",))
         for setting in ("local", "remote"):
             for gpus in ("0,1", "0,4", "4,5,6,7", "0,1,2,3,4,5,6,7"):

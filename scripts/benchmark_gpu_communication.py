@@ -307,6 +307,19 @@ def suite(args):
             add(gpus, "p2p_" + gpus.replace(",", "_"), env={"NCCL_P2P_DISABLE": "0"}, timeout=60)
         add("0,1", "cumem_host_only", env={"NCCL_CUMEM_HOST_ENABLE": "1"}, timeout=60)
     elif args.suite == "verify":
+        add(
+            "0,4",
+            "forced_p2p_sys_0_4",
+            env={"NCCL_P2P_DISABLE": "0", "NCCL_P2P_LEVEL": "SYS"},
+            timeout=75,
+        )
+        for gpus in ("0,1", "0,2"):
+            add(
+                gpus,
+                "legacy_p2p_" + gpus.replace(",", "_"),
+                env={"NCCL_P2P_DISABLE": "0", "NCCL_CUMEM_ENABLE": "0"},
+                timeout=75,
+            )
         for gpus in ("0,1", "0,2", "0,4", "4,5,6,7", "0,2,4,6", "0,1,2,3,4,5,6,7"):
             add(
                 gpus,

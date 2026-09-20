@@ -21,7 +21,9 @@ from types import SimpleNamespace
 
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suite", choices=("smoke", "matrix", "extended", "p2p", "dma"))
+    parser.add_argument(
+        "--suite", choices=("smoke", "matrix", "extended", "p2p", "dma", "transport")
+    )
     parser.add_argument("--worker", choices=("collective", "dma", "peer"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--sizes-mib", default="64,256")
@@ -263,6 +265,20 @@ def suite(args):
             add(gpus, "copy_" + gpus.replace(",", "_"), mode="peer", timeout=45)
             add(gpus, "p2p_" + gpus.replace(",", "_"), env={"NCCL_P2P_DISABLE": "0"}, timeout=60)
         add("0,1", "cumem_host_only", env={"NCCL_CUMEM_HOST_ENABLE": "1"}, timeout=60)
+    elif args.suite == "transport":
+        for gpus in ("0,1", "0,4", "4,5,6,7", "0,1,2,3,4,5,6,7"):
+            for mode in ("1", "2", "3"):
+                add(
+                    gpus,
+                    "memcpy" + mode + "_" + gpus.replace(",", "_"),
+                    env={"NCCL_SHM_USE_CUDA_MEMCPY": "1", "NCCL_SHM_MEMCPY_MODE": mode},
+                )
+            for channels in ("4", "8"):
+                add(
+                    gpus,
+                    "channels" + channels + "_" + gpus.replace(",", "_"),
+                    env={"NCCL_MIN_NCHANNELS": channels, "NCCL_MAX_NCHANNELS": channels},
+                )
     elif args.suite == "dma":
         for gpu in range(8):
             for setting in ("local", "remote"):

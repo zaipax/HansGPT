@@ -22,9 +22,9 @@ from types import SimpleNamespace
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--suite", choices=("smoke", "matrix", "extended", "p2p", "dma", "transport")
+        "--suite", choices=("smoke", "matrix", "extended", "p2p", "dma", "transport", "verify")
     )
-    parser.add_argument("--worker", choices=("collective", "dma", "peer"))
+    parser.add_argument("--worker", choices=("collective", "dma", "peer", "dma-group"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--sizes-mib", default="64,256")
     parser.add_argument("--warmup", type=int, default=3)
@@ -64,7 +64,7 @@ def worker(args):
 
     torch.set_num_threads(1)
     rank = int(os.environ.get("LOCAL_RANK", "0"))
-    device = torch.device("cuda", rank if args.worker == "collective" else 0)
+    device = torch.device("cuda", rank if args.worker in ("collective", "dma-group") else 0)
     torch.cuda.set_device(device)
     metadata = dict(
         git_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -79,6 +79,47 @@ def worker(args):
         environment={key: value for key, value in os.environ.items() if key.startswith("NCCL_")},
     )
     rows = []
+    if args.worker == "dma-group":
+        import torch.distributed as dist
+
+        dist.init_process_group("nccl", timeout=timedelta(seconds=35), device_id=device)
+        world = dist.get_world_size()
+        size = 64 * 1024**2 // 4
+        gpu = torch.full((size,), 7.0, device=device)
+        host = torch.full((size,), 7.0, pin_memory=True)
+        for direction in ("H2D", "D2H"):
+            times = []
+            for iteration in range(args.warmup + args.steps):
+                dist.barrier()
+                torch.cuda.synchronize()
+                before = time.perf_counter()
+                if direction == "H2D":
+                    gpu.copy_(host, non_blocking=True)
+                else:
+                    host.copy_(gpu, non_blocking=True)
+                torch.cuda.synchronize()
+                if iteration >= args.warmup:
+                    times.append(time.perf_counter() - before)
+            samples = [None] * world
+            dist.all_gather_object(samples, times)
+            maximum = [max(sample[i] for sample in samples) for i in range(args.steps)]
+            median = statistics.median(maximum)
+            rows.append(
+                dict(
+                    name=direction,
+                    median_seconds=median,
+                    per_rank_samples=samples,
+                    slowest_rank_GBps=size * 4 / median / 1e9,
+                    aggregate_GBps=size * 4 * world / median / 1e9,
+                )
+            )
+        if not bool((gpu == 7).all()) or not bool((host == 7).all()):
+            raise RuntimeError("Concurrent DMA result mismatch")
+        if rank == 0:
+            write_result(args.output, dict(metadata=metadata, rows=rows))
+            print(json.dumps(rows), flush=True)
+        dist.destroy_process_group()
+        return
     if args.worker == "collective":
         import torch.distributed as dist
 
@@ -265,6 +306,27 @@ def suite(args):
             add(gpus, "copy_" + gpus.replace(",", "_"), mode="peer", timeout=45)
             add(gpus, "p2p_" + gpus.replace(",", "_"), env={"NCCL_P2P_DISABLE": "0"}, timeout=60)
         add("0,1", "cumem_host_only", env={"NCCL_CUMEM_HOST_ENABLE": "1"}, timeout=60)
+    elif args.suite == "verify":
+        for gpus in ("0,1", "0,2", "0,4", "4,5,6,7", "0,2,4,6", "0,1,2,3,4,5,6,7"):
+            add(
+                gpus,
+                "dma_group_" + gpus.replace(",", "_"),
+                mode="dma-group",
+                extra=("--affinity", "local"),
+            )
+        for gpus in ("4,5,6,7", "0,2,4,6", "0,1,2,3,4,5,6,7"):
+            add(
+                gpus,
+                "p2p_group_" + gpus.replace(",", "_"),
+                env={"NCCL_P2P_DISABLE": "0"},
+                timeout=75,
+            )
+            add(
+                gpus,
+                "both_enabled_" + gpus.replace(",", "_"),
+                env={"NCCL_P2P_DISABLE": "0", "NCCL_CUMEM_HOST_ENABLE": "1"},
+                timeout=75,
+            )
     elif args.suite == "transport":
         for gpus in ("0,1", "0,4", "4,5,6,7", "0,1,2,3,4,5,6,7"):
             for mode in ("1", "2", "3"):
@@ -308,7 +370,7 @@ def suite(args):
         )
         env.update(overrides)
         command = ["timeout", "--signal=TERM", "--kill-after=10s", f"{deadline}s", sys.executable]
-        if mode == "collective":
+        if mode in ("collective", "dma-group"):
             command += [
                 "-m",
                 "torch.distributed.run",
